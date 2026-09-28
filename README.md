@@ -162,7 +162,10 @@ src/
   display.*        OLED SSD1306 (páginas de estado)
   ota_update.*     OTA desde GitHub Releases
 test/webmock/      servidor para probar la UI sin la placa
+test/tools/        simulador de esclavos RTU + bateria de pruebas automatica
 ```
+
+Banco de pruebas, materiales y cableado detallado: [test/README.md](test/README.md).
 
 ## Próximos pasos: mejoras Aysafi
 
