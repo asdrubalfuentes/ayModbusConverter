@@ -5,6 +5,9 @@
 #include "gateway.h"
 #include "modbus_rtu.h"
 #include "display.h"
+#include "mb_util.h"
+#include "mqtt_bridge.h"
+#include <vector>
 #include "fw_version.h"
 #include <WiFi.h>
 #include <WebServer.h>
@@ -55,6 +58,15 @@ static bool auth() {
   return false;
 }
 
+// API para maquinas (/api/read, /api/write, /api/tags): clave X-API-Key o ?key=, o HTTP Basic
+static bool authApi() {
+  if (cfg.apiKey[0]) {
+    String k = web.hasHeader("X-API-Key") ? web.header("X-API-Key") : web.arg("key");
+    if (k.length() && k == cfg.apiKey) return true;
+  }
+  return auth();
+}
+
 static bool parseBody(JsonDocument& doc) {
   if (!web.hasArg("plain")) { sendErr(400, "sin cuerpo"); return false; }
   if (deserializeJson(doc, web.arg("plain")) != DeserializationError::Ok) { sendErr(400, "JSON invalido"); return false; }
@@ -101,6 +113,9 @@ static void handleStatus() {
   d["chip"]   = chipId();
   d["defPass"]= cfgDefaultPassword();
   d["mon"]    = gwMonitorEnabled();
+  d["wizard"] = cfg.wizardDone;
+  d["state"]  = netEthLink() ? txStateStr(gwGlobalState()) : "LAN DESCONECTADA";
+  d["mqtt"]   = mqttStateStr();
   if (netTimeOk()) d["time"] = (uint32_t)time(nullptr);
 
   JsonObject n = d["net"].to<JsonObject>();
@@ -208,96 +223,157 @@ static void handleStatsReset() {
   sendOk();
 }
 
-// Herramienta de prueba: lectura/escritura directa a un esclavo del bus
+// Herramienta de prueba: lectura/escritura directa a un esclavo (puerto explicito, sin cache)
 static void handleTest() {
   if (!auth()) return;
   JsonDocument q;
   if (!parseBody(q)) return;
-  uint8_t  uid  = q["uid"]  | 1;
-  uint8_t  fc   = q["fc"]   | 3;
-  uint16_t addr = q["addr"] | 0;
-  uint16_t qty  = q["qty"]  | 1;
-  uint16_t tmo  = q["timeout"] | 0;
-
-  uint8_t req[RTU_MAX_ADU];
-  size_t n = 0;
-  req[n++] = uid; req[n++] = fc;
-  req[n++] = addr >> 8; req[n++] = addr & 0xFF;
-  switch (fc) {
-    case 1: case 2: case 3: case 4:
-      qty = constrain(qty, 1, (fc <= 2) ? 2000 : 125);
-      req[n++] = qty >> 8; req[n++] = qty & 0xFF;
-      break;
-    case 5: {
-      bool v = (q["value"] | 0) != 0;
-      req[n++] = v ? 0xFF : 0x00; req[n++] = 0x00;
-      break;
-    }
-    case 6: {
-      uint16_t v = (uint16_t)(q["value"] | 0);
-      req[n++] = v >> 8; req[n++] = v & 0xFF;
-      break;
-    }
-    case 16: {
-      JsonArrayConst vals = q["values"];
-      uint16_t c = constrain((int)vals.size(), 1, 123);
-      req[n++] = c >> 8; req[n++] = c & 0xFF; req[n++] = c * 2;
-      for (uint16_t i = 0; i < c; i++) {
-        uint16_t v = (uint16_t)(vals[i] | 0);
-        req[n++] = v >> 8; req[n++] = v & 0xFF;
-      }
-      break;
-    }
-    default:
-      sendErr(400, "funcion no soportada");
-      return;
-  }
-
-  uint8_t resp[RTU_MAX_ADU];
-  size_t rl = 0; uint32_t lat = 0;
-  if (!rtuLock(5000)) { sendErr(503, "bus ocupado"); return; }
-  RtuResult r = rtuTransact(req, n, resp, rl, sizeof(resp), lat, tmo);
-  rtuUnlock();
-
+  uint8_t pdu[RTU_MAX_ADU];
+  const char* err = nullptr;
+  size_t pl = mbBuildPdu(q.as<JsonVariantConst>(), pdu, &err);
+  if (!pl) { sendErr(400, err); return; }
+  int port = (q["port"] | 1) - 1;
+  GwResult r;
+  bool done = gwExecute(port, q["uid"] | 1, pdu, pl, r, 15000, false);
   JsonDocument d;
-  d["ok"] = (r == RTU_OK || r == RTU_BCAST);
-  d["result"] = rtuResultStr(r);
-  d["lat"] = lat;
-  char hex[RTU_MAX_ADU * 3 + 1]; size_t p = 0;
-  for (size_t i = 0; i < rl; i++) p += snprintf(hex + p, sizeof(hex) - p, i ? " %02X" : "%02X", resp[i]);
-  hex[p] = 0;
-  d["raw"] = hex;
-  if (r == RTU_OK) {
-    if (resp[1] & 0x80) {
-      d["ok"] = false;
-      d["exception"] = resp[2];
-    } else if (fc <= 4 && rl >= 3) {
-      JsonArray v = d["values"].to<JsonArray>();
-      uint8_t bc = resp[2];
-      if (fc <= 2) {
-        for (uint16_t i = 0; i < qty && (i >> 3) < bc; i++) v.add((resp[3 + (i >> 3)] >> (i & 7)) & 1);
-      } else {
-        for (uint16_t i = 0; i + 1 < bc && 4 + i < rl; i += 2) v.add((uint16_t)((resp[3 + i] << 8) | resp[4 + i]));
-      }
-    }
-  }
+  mbResultJson(r, done, pdu[0], q["qty"] | 1, d.to<JsonObject>());
   sendJson(200, d);
 }
 
-static void handleScanPost() {
+// API REST: GET /api/read?uid=1&fc=3&addr=0&qty=10[&port=1][&cache=0]
+static void handleRead() {
+  if (!authApi()) return;
+  JsonDocument q;
+  q["uid"] = web.hasArg("uid") ? web.arg("uid").toInt() : 1;
+  q["fc"] = web.hasArg("fc") ? web.arg("fc").toInt() : 3;
+  q["addr"] = web.arg("addr").toInt();
+  q["qty"] = web.hasArg("qty") ? web.arg("qty").toInt() : 1;
+  uint8_t fc = q["fc"];
+  if (fc < 1 || fc > 4) { sendErr(400, "fc debe ser 1..4 (use /api/write para escribir)"); return; }
+  uint8_t pdu[8];
+  size_t pl = mbBuildPdu(q.as<JsonVariantConst>(), pdu, nullptr);
+  int port = web.hasArg("port") ? web.arg("port").toInt() - 1 : -1;
+  bool useCache = !web.hasArg("cache") || web.arg("cache") != "0";
+  GwResult r;
+  bool done = gwExecute(port, q["uid"], pdu, pl, r, 15000, useCache);
+  JsonDocument d;
+  d["uid"] = q["uid"]; d["fc"] = fc; d["addr"] = q["addr"];
+  mbResultJson(r, done, fc, q["qty"], d.to<JsonObject>());
+  sendJson(d["ok"] ? 200 : 502, d);
+}
+
+// API REST: POST /api/write {uid, fc(5|6|15|16), addr, value | values[, port]}
+static void handleWrite() {
+  if (!authApi()) return;
+  JsonDocument q;
+  if (!parseBody(q)) return;
+  uint8_t fc = q["fc"] | 6;
+  if (!(fc == 5 || fc == 6 || fc == 15 || fc == 16)) { sendErr(400, "fc debe ser 5, 6, 15 o 16"); return; }
+  uint8_t pdu[RTU_MAX_ADU];
+  const char* err = nullptr;
+  size_t pl = mbBuildPdu(q.as<JsonVariantConst>(), pdu, &err);
+  if (!pl) { sendErr(400, err); return; }
+  int port = q["port"].is<int>() ? (int)q["port"] - 1 : -1;
+  GwResult r;
+  bool done = gwExecute(port, q["uid"] | 1, pdu, pl, r, 15000, false);
+  JsonDocument d;
+  mbResultJson(r, done, fc, 0, d.to<JsonObject>());
+  sendJson(d["ok"] ? 200 : 502, d);
+}
+
+static void handleTags() {
+  if (!authApi()) return;
+  JsonDocument d;
+  gwTagsJson(d["tags"].to<JsonArray>());
+  sendJson(200, d);
+}
+
+static void handleLearnGet() {
+  if (!auth()) return;
+  JsonDocument d;
+  d["en"] = gwLearnEnabled();
+  gwLearnJson(d["items"].to<JsonArray>());
+  sendJson(200, d);
+}
+
+static void handleLearnPost() {
   if (!auth()) return;
   JsonDocument q;
   if (!parseBody(q)) return;
-  if (q["stop"] | false) { gwScanStop(); sendOk(); return; }
-  if (!gwScanStart(q["from"] | 1, q["to"] | 247, q["timeout"] | 100)) { sendErr(400, "rango invalido"); return; }
+  if (q["en"].is<bool>()) gwLearnEnable(q["en"]);
+  if (q["clear"] | false) gwLearnClear();
   sendOk();
 }
 
-static void handleScanGet() {
+// Herramientas: {kind:"scan",port,from,to,timeout} {kind:"detect",port,passive,ids}
+// {kind:"discover",port,uid,step,max} {kind:"stop"}
+static void handleToolPost() {
+  if (!auth()) return;
+  JsonDocument q;
+  if (!parseBody(q)) return;
+  String k = q["kind"] | "";
+  uint8_t port = (q["port"] | 1) - 1;
+  bool ok;
+  if (k == "stop")          { gwToolStop(); ok = true; }
+  else if (k == "scan")     ok = gwScanStart(port, q["from"] | 1, q["to"] | 247, q["timeout"] | 100);
+  else if (k == "detect")   ok = gwDetectStart(port, q["passive"] | false, q["ids"] | "1-10");
+  else if (k == "discover") ok = gwDiscoverStart(port, q["uid"] | 1, q["step"] | 100, q["max"] | 10000);
+  else if (k == "apply")    ok = gwDetectApply();
+  else { sendErr(400, "herramienta desconocida"); return; }
+  if (!ok) { sendErr(409, "no se pudo iniciar (otra herramienta en curso o puerto apagado)"); return; }
+  sendOk();
+}
+
+static void handleToolGet() {
   if (!auth()) return;
   JsonDocument d;
-  gwScanJson(d.to<JsonObject>());
+  gwToolJson(d.to<JsonObject>());
   sendJson(200, d);
+}
+
+// Monitor como captura para Wireshark
+struct VecPrint : public Print {
+  std::vector<uint8_t> v;
+  size_t write(uint8_t c) override { v.push_back(c); return 1; }
+  size_t write(const uint8_t* b, size_t n) override { v.insert(v.end(), b, b + n); return n; }
+};
+static void handlePcap() {
+  if (!auth()) return;
+  VecPrint vp;
+  vp.v.reserve(8192);
+  gwPcap(vp);
+  web.sendHeader("Content-Disposition", String("attachment; filename=\"") + cfg.hostname + "-modbus.pcapng\"");
+  web.setContentLength(vp.v.size());
+  web.send(200, "application/octet-stream", "");
+  web.sendContent((const char*)vp.v.data(), vp.v.size());
+}
+
+// Aplica la configuracion de UN puerto sin reiniciar: {port: 1|2, cfg: {baud, parity, ...}}
+static void handlePortApply() {
+  if (!auth()) return;
+  JsonDocument q;
+  if (!parseBody(q)) return;
+  int p = (q["port"] | 1) - 1;
+  if (p < 0 || p >= NUM_PORTS) { sendErr(400, "puerto invalido"); return; }
+  JsonDocument w;
+  JsonArray pa = w["ports"].to<JsonArray>();
+  for (int i = 0; i < NUM_PORTS; i++) {
+    if (i == p) pa.add(q["cfg"]);
+    else pa.add<JsonObject>();
+  }
+  cfgFromJson(w.as<JsonVariantConst>());
+  bool ok = cfgSave();
+  gwReopenPort(p);
+  if (!ok) { sendErr(500, "no se pudo guardar"); return; }
+  sendOk();
+}
+
+// Asistente: marcar como hecho sin reiniciar (boton "omitir")
+static void handleWizardDone() {
+  if (!auth()) return;
+  cfg.wizardDone = true;
+  cfgSave();
+  sendOk();
 }
 
 static void handleOta() {
@@ -357,8 +433,16 @@ void webBegin() {
   web.on("/api/monitor", HTTP_POST, handleMonitorPost);
   web.on("/api/stats/reset", HTTP_POST, handleStatsReset);
   web.on("/api/test", HTTP_POST, handleTest);
-  web.on("/api/scan", HTTP_GET, handleScanGet);
-  web.on("/api/scan", HTTP_POST, handleScanPost);
+  web.on("/api/tool", HTTP_GET, handleToolGet);
+  web.on("/api/tool", HTTP_POST, handleToolPost);
+  web.on("/api/read", HTTP_GET, handleRead);
+  web.on("/api/write", HTTP_POST, handleWrite);
+  web.on("/api/tags", HTTP_GET, handleTags);
+  web.on("/api/learn", HTTP_GET, handleLearnGet);
+  web.on("/api/learn", HTTP_POST, handleLearnPost);
+  web.on("/api/pcap", HTTP_GET, handlePcap);
+  web.on("/api/wizard/done", HTTP_POST, handleWizardDone);
+  web.on("/api/port/apply", HTTP_POST, handlePortApply);
   web.on("/api/ota", HTTP_POST, handleOta);
   web.on("/api/fw", HTTP_POST, handleFwDone, handleFwUpload);
   // deteccion de portal cautivo de Android / iOS / Windows
@@ -368,6 +452,8 @@ void webBegin() {
   web.on("/ncsi.txt", handleNotFound);
   web.on("/connecttest.txt", handleNotFound);
   web.onNotFound(handleNotFound);
+  static const char* HDRS[] = { "X-API-Key" };
+  web.collectHeaders(HDRS, 1);
   web.begin();
 }
 

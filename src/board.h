@@ -20,6 +20,12 @@
 #define PIN_RS485_TX   17    // serigrafia "TXD/IO17"  -> DI
 #define PIN_RS485_DE   33    // serigrafia "485_EN"    -> DE + /RE  (UART RTS, half-duplex HW)
 
+// Puerto 2 (UART1) -> transceptor RS-232 MAX3232, o un modulo RS-485
+// AUTODIRECCIONAL (no queda ningun GPIO de salida libre para un DE).
+#define PIN_P2_RX      35    // serigrafia "IO35" (solo entrada) <- R1OUT del MAX3232
+#define PIN_P2_TX      4     // serigrafia "IO4"                 -> T1IN  del MAX3232
+#define PIN_P2_DE      -1
+
 // OLED SSD1306 128x64 0.96" I2C
 #define PIN_OLED_SDA   14
 #define PIN_OLED_SCL   15

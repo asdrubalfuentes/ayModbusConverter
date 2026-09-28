@@ -7,6 +7,7 @@
 | 1 | WT32-ETH01 v1.4 | equipo bajo prueba | |
 | 1 | Adaptador USB-TTL 3,3 V (CP2102, CH340, FT232) | primera programación y consola de log | con salida 3V3 o 5V |
 | 1 | Módulo transceptor RS-485 **3,3 V** (MAX3485, SP3485, "TTL to RS485" 3V3) | puerto RS-485 del conversor | ver §2.2 si es de 5 V o autodireccional |
+| 1 | Módulo **MAX3232** 3,3 V (con conector DB9 o bornes) | puerto 2 RS-232 | opcional |
 | 1 | OLED SSD1306 0,96" 128x64 **I2C** (4 pines) | pantalla | dirección 0x3C |
 | 1 | Pulsador NA | botón CFG | |
 | 1 | LED + resistencia 330 Ω a 1 kΩ | actividad Modbus | opcional |
@@ -15,6 +16,7 @@
 | 2 | Resistencias 120 Ω | terminación del bus en los dos extremos | |
 | – | Par trenzado (UTP sirve), cables dupont, protoboard | | |
 | 1 | Cable de red + switch/router con DHCP | LAN | o directo al PC con IP fija |
+| 1 | *Opcional:* adaptador USB-RS232 (o un segundo USB-RS485 si el P2 lleva módulo autodireccional) | simular un esclavo en el puerto 2 | |
 | 1 | *Opcional:* equipo Modbus RTU real (sensor XY-MD02, medidor Eastron SDM120/SDM630, variador) | prueba de campo | XY-MD02: 9600 8N1, ID 1 |
 | 1 | *Opcional:* analizador lógico 8 canales 24 MHz | ver DE, t3.5 y tiempos reales en el bus | |
 
@@ -30,6 +32,8 @@
 | **RXD** (IO5) | 5 | RO del transceptor | RS-485 → ESP32 |
 | **TXD** (IO17) | 17 | DI del transceptor | ESP32 → RS-485 |
 | **485_EN** (IO33) | 33 | DE + /RE del transceptor (puenteados) | dirección, alto = transmitir (lo maneja la UART por hardware) |
+| **IO35** | 35 | R1OUT del MAX3232 | P2 RS-232 → ESP32 (solo entrada) |
+| **IO4** | 4 | T1IN del MAX3232 | P2 ESP32 → RS-232 |
 | **IO14** | 14 | SDA del OLED | I2C datos |
 | **IO15** | 15 | SCL del OLED | I2C reloj |
 | **CFG** (IO32) | 32 | pulsador → GND | botón (pull-up interno) |
@@ -39,7 +43,7 @@
 | **IO0** | 0 | GND **solo para programar** | modo descarga; después se deja libre |
 | **EN** | – | GND un instante | reset |
 
-**No conectar nada** a IO0 (en funcionamiento), 16, 18, 19, 21, 22, 23, 25, 26, 27: los usa la PHY Ethernet. IO12 debe estar en bajo al arrancar. IO35, IO36 e IO39 quedan libres (solo entrada).
+**No conectar nada** a IO0 (en funcionamiento), 16, 18, 19, 21, 22, 23, 25, 26, 27: los usa la PHY Ethernet. IO12 debe estar en bajo al arrancar. Quedan libres IO36 e IO39 (solo entrada).
 
 ### 2.2 Transceptor RS-485
 
@@ -75,6 +79,22 @@ Variantes habituales:
 - 120 Ω entre A y B **solo en los dos extremos físicos** del cable. Muchos módulos ya traen una (R0 = 120 Ω): usa como máximo dos en todo el bus.
 - En el banco (menos de 2 m) funciona sin terminación, pero conviene probar como en campo.
 - Une las masas (GND) si los equipos no comparten fuente.
+
+### 2.3b Puerto 2 (RS-232)
+
+| MAX3232 | Conectar a |
+|---|---|
+| VCC | 3V3 |
+| GND | GND |
+| T1IN | IO4 |
+| R1OUT | IO35 |
+| T1OUT | RX del equipo RS-232 (DB9 pin 2) |
+| R1IN | TX del equipo RS-232 (DB9 pin 3) |
+| GND | GND del equipo (DB9 pin 5) |
+
+- Si no hay comunicación, cruza TX/RX (depende de si el equipo es DTE o DCE).
+- En lugar del MAX3232 se puede montar un módulo **RS-485 autodireccional** (TXD del módulo → IO35, RXD → IO4) para tener un segundo bus RS-485.
+- En la web: **Puertos serie → Puerto 2 → Habilitado**. Por defecto atiende los Unit ID 101-147 con offset -100 (TCP 101 = esclavo 1 del P2) y la web ajusta el P1 a 1-100.
 
 ### 2.4 OLED SSD1306 I2C
 
@@ -142,7 +162,17 @@ Qué verifica `gw_test.py` (`--list` para verlas):
 | Concurrencia | N clientes, ninguna respuesta cruzada |
 | Límite de conexiones | la conexión N+1 se rechaza |
 | Latencia | min/media/p95/max extremo a extremo |
-| API | `/api/status` responde y el servidor escucha |
+| API | `/api/status` responde, el servidor escucha y reporta un estado válido |
+| Esclavo caído | tras `--off-after` timeouts el ID inexistente responde 0x0B al instante y figura DESCONECTADO |
+| API REST | `/api/read` y `/api/write` (con relectura) y `/api/tags` |
+| Caché *(opcional, `--cache`)* | 30 lecturas cubiertas por la tabla de sondeo salen de memoria |
+| Solo lectura *(opcional, `--ro-uid N`)* | la escritura al esclavo N recibe 0x01 |
+
+Para las pruebas opcionales:
+
+- `--cache`: en **Sondeo y caché** agrega una lectura P1, esclavo 1, FC03, dirección 0, cantidad 20, periodo 500 ms; en **Puertos serie → Puerto 1** activa la caché. Guarda y corre `gw_test.py --cache`.
+- `--ro-uid 2`: en **Sondeo y caché → Solo lectura** agrega una regla P1, esclavo 2 a 2, direcciones 0 a 65535. Guarda y corre `gw_test.py --ro-uid 2`.
+- Puerto 2: con un segundo simulador (`rtu_slave_sim.py --port COM8 --ids 1`) en el RS-232, `/api/read?uid=101&fc=3&addr=0&qty=5` debe devolver `1000..1004` (datos del esclavo 1 del P2).
 
 Latencia esperada a 9600 bps con FC03 de 10 registros: unos 35 a 45 ms (≈ 8 + 25 bytes en el aire + pausas).
 
@@ -162,6 +192,14 @@ Latencia esperada a 9600 bps con FC03 de 10 registros: unos 35 a 45 ms (≈ 8 + 
 | 10 | Respaldo → fábrica → restaurar | la configuración vuelve completa |
 | 11 | Cliente fuera de la lista blanca | conexión rechazada, contador "rechazadas" sube |
 | 12 | Cortar la alimentación con tráfico | arranca solo y vuelve a atender |
+| 13 | Equipo nuevo (fábrica) | el asistente se abre solo; la ficha se imprime |
+| 14 | Asistente → Detectar automáticamente con el simulador a 19200 8E1 | encuentra 19200 8E1 |
+| 15 | Detección pasiva con otro maestro sondeando el bus | detecta sin transmitir |
+| 16 | Diagnóstico → Explorar el ID 1 | rangos FC03/FC04 0-999 |
+| 17 | Detener el simulador | OLED: estado DESCONECTADO parpadeando y la pantalla se enciende; banner rojo en el portal |
+| 18 | Volver a arrancar el simulador | vuelve a OK en OLED, portal y MQTT |
+| 19 | MQTT hacia un broker de prueba | `<base>/status` retenido; `<base>/cmd` responde en `<base>/cmd/resp` |
+| 20 | Monitor → Wireshark (.pcapng) | abre en Wireshark con DLT 147 = mbrtu, 148 = mbtcp |
 
 ## 4. Herramientas existentes: ¿sirven?
 

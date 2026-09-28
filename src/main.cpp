@@ -7,7 +7,9 @@
  *     esclavo conectado (la pasarela no guarda registros propios).
  *   - Servicio por LAN (Ethernet, DHCP o IP fija); WiFi solo como AP con
  *     portal cautivo de configuracion.
- *   - Web de configuracion/diagnostico, OLED 128x64, OTA web y GitHub Releases.
+ *   - Dos puertos serie (RS-485 + RS-232) enrutados por Unit ID; cache/agente.
+ *   - Web con asistente, autodeteccion y diagnostico; OLED con estados; MQTT/REST.
+ *   - OTA web y GitHub Releases.
  */
 #include <Arduino.h>
 #include "board.h"
@@ -18,6 +20,7 @@
 #include "web.h"
 #include "display.h"
 #include "ota_update.h"
+#include "mqtt_bridge.h"
 #include "fw_version.h"
 
 // ---------------------------------------------------------------------------
@@ -101,12 +104,16 @@ void setup() {
   dispBegin();
 
   netBegin();
-  rtuBegin();
+  for (uint8_t p = 0; p < NUM_PORTS; p++) {
+    rtuPort[p].begin();
+    const PortCfg& c = cfg.port[p];
+    if (c.en) Serial.printf("[cfg] P%u %s %lu %u%c%u  Unit ID %u-%u%+d\n", p + 1, c.name, (unsigned long)c.baud,
+                            c.dataBits, c.parity, c.stopBits, c.uidFrom, c.uidTo, c.uidOffset);
+  }
   gwBegin();
   webBegin();
-
-  Serial.printf("[cfg] %s  RS485 %lu %u%c%u  TCP:%u\n", cfg.devName, (unsigned long)cfg.baud,
-                cfg.dataBits, cfg.parity, cfg.stopBits, cfg.tcpPort);
+  mqttBegin();
+  Serial.printf("[cfg] %s  Modbus TCP :%u\n", cfg.devName, cfg.tcpPort);
 }
 
 void loop() {
@@ -115,6 +122,7 @@ void loop() {
   serviceButton();
   dispLoop();
   serviceOta();
+  mqttLoop();
 
   if (webRebootAt && (int32_t)(millis() - webRebootAt) >= 0) {
     dispMessage("Reiniciando", "", "", nullptr, 0);

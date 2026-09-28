@@ -13,17 +13,26 @@ static bool     s_ok = false;
 static bool     s_on = true;
 static uint8_t  s_page = 0;
 static uint32_t s_lastDraw = 0, s_lastWake = 0;
-static const uint8_t PAGES = 4;
+static const uint8_t PAGES = 6;
+static uint8_t  s_lastKey = 0xFF;          // estados vistos (despierta la pantalla al cambiar)
 
 static char     s_msg[4][26];
 static bool     s_msgOn = false;
 static uint32_t s_msgUntil = 0;
 
-static const char* PAR[] = { "N", "E", "O" };
+static String serialStr(uint8_t p) {
+  const PortCfg& c = cfg.port[p];
+  return String(c.baud) + " " + c.dataBits + c.parity + c.stopBits;
+}
 
-static String serialStr() {
-  const char* p = cfg.parity == 'E' ? PAR[1] : (cfg.parity == 'O' ? PAR[2] : PAR[0]);
-  return String(cfg.baud) + " " + cfg.dataBits + p + cfg.stopBits;
+static const char* shortState(TxState s) {
+  switch (s) {
+    case TXS_OK:    return "OK";
+    case TXS_FAULT: return "FALLAS";
+    case TXS_DOWN:  return "DESCONECT.";
+    case TXS_OFF:   return "apagado";
+    default:        return "sin trafico";
+  }
 }
 
 static String uptimeStr() {
@@ -105,18 +114,53 @@ static void header(const char* title) {
   oled.drawHorizontalLine(0, 13, 128);
   // indicador de pagina
   for (uint8_t i = 0; i < PAGES; i++) {
-    if (i == s_page) oled.fillRect(52 + i * 6, 62, 4, 2);
-    else oled.drawHorizontalLine(52 + i * 6, 63, 4);
+    if (i == s_page) oled.fillRect(46 + i * 6, 62, 4, 2);
+    else oled.drawHorizontalLine(46 + i * 6, 63, 4);
+  }
+}
+
+// Estado grande: lo primero que se ve en el tablero
+static void pageState() {
+  header("Estado");
+  const char* big;
+  bool alarm;
+  if (!netEthLink()) { big = "SIN LAN"; alarm = true; }
+  else {
+    TxState g = gwGlobalState();
+    big = g == TXS_OK ? "OK" : g == TXS_FAULT ? "FALLAS" : g == TXS_DOWN ? "DESCONECTADO"
+        : g == TXS_OFF ? "SIN PUERTOS" : "SIN TRAFICO";
+    alarm = (g == TXS_FAULT || g == TXS_DOWN);
+  }
+  oled.setFont(ArialMT_Plain_16);
+  oled.setTextAlignment(TEXT_ALIGN_CENTER);
+  if (alarm && (millis() / 500) % 2) {            // parpadeo invertido ante fallas
+    oled.fillRect(0, 15, 128, 20);
+    oled.setColor(BLACK);
+    oled.drawString(64, 16, big);
+    oled.setColor(WHITE);
+  } else {
+    oled.drawString(64, 16, big);
+  }
+  oled.setFont(ArialMT_Plain_10);
+  oled.setTextAlignment(TEXT_ALIGN_LEFT);
+  int y = 37;
+  for (uint8_t p = 0; p < NUM_PORTS; p++) {
+    if (!cfg.port[p].en) continue;
+    oled.drawString(0, y, String("P") + (p + 1) + " " + cfg.port[p].name);
+    oled.setTextAlignment(TEXT_ALIGN_RIGHT);
+    oled.drawString(127, y, shortState(gwPortState(p)));
+    oled.setTextAlignment(TEXT_ALIGN_LEFT);
+    y += 11;
   }
 }
 
 static void pageNet() {
   header(cfg.devName);
   if (netEthLink()) {
-    oled.drawString(0, 15, "ETH " + netEthIp());
+    oled.drawString(0, 15, "LAN " + netEthIp());
     oled.drawString(0, 26, String(netEthSpeed()) + "M " + (netEthFullDuplex() ? "Full" : "Half") + (netEthUp() ? "" : " (sin IP)"));
   } else {
-    oled.drawString(0, 15, "ETH sin cable");
+    oled.drawString(0, 15, "LAN DESCONECTADA");
   }
   if (netApUp()) {
     oled.drawString(0, 37, String("AP ") + cfg.apSsid);
@@ -126,14 +170,37 @@ static void pageNet() {
   }
 }
 
-static void pageModbus() {
-  header("Pasarela Modbus");
-  oled.drawString(0, 15, String(cfg.tcpProto == TCP_MBTCP ? "Modbus TCP" : "RTU/TCP") + " :" + cfg.tcpPort);
-  oled.drawString(0, 26, "RS485 " + serialStr());
-  oled.drawString(0, 37, "Clientes " + String(gwClientCount()) + "/" + cfg.maxClients);
-  oled.drawString(0, 48, cfg.uidMode == UID_FIXED ? "UID fijo " + String(cfg.fixedUid)
-                       : cfg.uidMode == UID_MAP ? "UID mapa " + String(cfg.mapFrom) + "-" + cfg.mapTo + " " + (cfg.mapOffset >= 0 ? "+" : "") + cfg.mapOffset
-                       : String("UID transparente"));
+static void pagePorts() {
+  header("Puertos");
+  oled.drawString(0, 15, String(cfg.tcpProto == TCP_MBTCP ? "Modbus TCP" : "RTU/TCP") + " :" + cfg.tcpPort +
+                         "  cli " + gwClientCount() + "/" + cfg.maxClients);
+  int y = 26;
+  for (uint8_t p = 0; p < NUM_PORTS && y <= 48; p++) {
+    const PortCfg& c = cfg.port[p];
+    if (!c.en) { oled.drawString(0, y, String("P") + (p + 1) + " apagado"); y += 11; continue; }
+    String ids = String(" ID") + c.uidFrom + "-" + c.uidTo;
+    if (c.uidOffset) ids += String(c.uidOffset > 0 ? "+" : "") + c.uidOffset;
+    oled.drawString(0, y, String("P") + (p + 1) + " " + serialStr(p) + ids + (c.cacheEn ? " C" : ""));
+    y += 11;
+  }
+}
+
+static void pageSlaves() {
+  header("Esclavos");
+  SlaveBrief sb[16];
+  int n = gwSlaveList(sb, 16);
+  if (!n) { oled.drawString(0, 26, "Sin trafico todavia"); return; }
+  // de a 4 por pantalla, rota cada 3 s si hay mas
+  int pages = (n + 3) / 4;
+  int off = ((millis() / 3000) % pages) * 4;
+  for (int i = 0; i < 4 && off + i < n; i++) {
+    const SlaveBrief& e = sb[off + i];
+    int y = 15 + i * 11;
+    oled.drawString(0, y, String("P") + (e.port + 1) + " ID " + e.uid);
+    oled.setTextAlignment(TEXT_ALIGN_RIGHT);
+    oled.drawString(127, y, shortState(e.st));
+    oled.setTextAlignment(TEXT_ALIGN_LEFT);
+  }
 }
 
 static void pageTraffic() {
@@ -143,7 +210,7 @@ static void pageTraffic() {
   oled.drawString(0, 26, "T.out " + String(gwStats.rtuTimeout));
   oled.drawString(64, 26, "CRC " + String(gwStats.rtuCrc));
   oled.drawString(0, 37, "Exc " + String(gwStats.rtuExc));
-  oled.drawString(64, 37, "Bc " + String(gwStats.bcast));
+  oled.drawString(64, 37, "Cache " + String(gwStats.cacheHits));
   oled.drawString(0, 48, "Lat " + String(gwStats.lastLatencyMs) + " ms");
 }
 
@@ -159,6 +226,15 @@ void dispLoop() {
   if (!s_ok) return;
   uint32_t now = millis();
   if (s_msgOn && s_msgUntil && (int32_t)(now - s_msgUntil) >= 0) { s_msgOn = false; s_lastDraw = 0; }
+
+  // un cambio de estado (LAN, puertos) despierta la pantalla y salta a la pagina de estado
+  uint8_t key = netEthLink() ? 1 : 0;
+  for (uint8_t p = 0; p < NUM_PORTS; p++) key |= (gwPortState(p) & 7) << (1 + 3 * p);
+  if (key != s_lastKey) {
+    bool changed = s_lastKey != 0xFF;
+    s_lastKey = key;
+    if (changed) { s_page = 0; dispWake(); }
+  }
 
   // proteccion contra quemado del OLED
   if (s_on && cfg.oledSleepMin && !s_msgOn && now - s_lastWake > cfg.oledSleepMin * 60000UL) {
@@ -177,9 +253,11 @@ void dispLoop() {
     for (int i = 1; i < 4; i++) oled.drawString(64, 4 + i * 14, s_msg[i]);
   } else {
     switch (s_page) {
-      case 0: pageNet(); break;
-      case 1: pageModbus(); break;
-      case 2: pageTraffic(); break;
+      case 0: pageState(); break;
+      case 1: pageNet(); break;
+      case 2: pagePorts(); break;
+      case 3: pageSlaves(); break;
+      case 4: pageTraffic(); break;
       default: pageSystem(); break;
     }
   }

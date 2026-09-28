@@ -2,58 +2,49 @@
 #include "config.h"
 #include "board.h"
 #include "gateway.h"
-#include <freertos/semphr.h>
 
-static HardwareSerial& port = Serial2;
-static SemaphoreHandle_t s_mtx = nullptr;
-static uint32_t s_gapUs = 2000;
-static uint32_t s_lastEndMs = 0;     // fin de la ultima transaccion (turnaround)
+RtuPort rtuPort[NUM_PORTS] = {
+  RtuPort(0, Serial2, PIN_RS485_RX, PIN_RS485_TX, PIN_RS485_DE),
+  RtuPort(1, Serial1, PIN_P2_RX, PIN_P2_TX, PIN_P2_DE),
+};
 
-static uint32_t serialConfig() {
-  // SERIAL_<bits><parity><stop>
-  static const uint32_t T[2][3][2] = {
-    // 7 bits: N1 N2 / E1 E2 / O1 O2
-    { { SERIAL_7N1, SERIAL_7N2 }, { SERIAL_7E1, SERIAL_7E2 }, { SERIAL_7O1, SERIAL_7O2 } },
-    { { SERIAL_8N1, SERIAL_8N2 }, { SERIAL_8E1, SERIAL_8E2 }, { SERIAL_8O1, SERIAL_8O2 } },
-  };
-  int b = cfg.dataBits == 7 ? 0 : 1;
-  int p = cfg.parity == 'E' ? 1 : (cfg.parity == 'O' ? 2 : 0);
-  int s = cfg.stopBits == 2 ? 1 : 0;
-  return T[b][p][s];
+void RtuPort::begin() {
+  const PortCfg& c = cfg.port[idx_];
+  if (!c.en) { close(); return; }
+  open(c.baud, c.dataBits, c.parity, c.stopBits, c.charTimeoutMs);
 }
 
-void rtuBegin() {
-  if (!s_mtx) s_mtx = xSemaphoreCreateMutex();
-
+void RtuPort::open(uint32_t baud, uint8_t dataBits, char parity, uint8_t stopBits, uint16_t charTimeoutMs) {
+  if (!baud) baud = 9600;
   // bits por caracter: start + datos + paridad + stop
-  uint32_t bits = 1 + cfg.dataBits + (cfg.parity == 'N' ? 0 : 1) + cfg.stopBits;
-  uint32_t charUs = (bits * 1000000UL) / (cfg.baud ? cfg.baud : 9600);
-  if (cfg.charTimeoutMs) {
-    s_gapUs = (uint32_t)cfg.charTimeoutMs * 1000UL;
+  uint32_t bits = 1 + dataBits + (parity == 'N' ? 0 : 1) + stopBits;
+  uint32_t charUs = (bits * 1000000UL) / baud;
+  if (charTimeoutMs) {
+    gapUs_ = (uint32_t)charTimeoutMs * 1000UL;
   } else {
     // t3.5 del estandar (1750 us fijo por encima de 19200) con margen para la
     // latencia del driver de la UART y equipos que no respetan el silencio.
-    uint32_t t35 = (cfg.baud > 19200) ? 1750 : (charUs * 35) / 10;
-    s_gapUs = max<uint32_t>(t35 + charUs, 2000);
+    uint32_t t35 = (baud > 19200) ? 1750 : (charUs * 35) / 10;
+    gapUs_ = max<uint32_t>(t35 + charUs, 2000);
   }
 
-  port.end();
-  port.setRxBufferSize(1024);
-  port.begin(cfg.baud, serialConfig(), PIN_RS485_RX, PIN_RS485_TX);
-  if (PIN_RS485_DE >= 0) {
-    port.setPins(PIN_RS485_RX, PIN_RS485_TX, -1, PIN_RS485_DE);
-    port.setMode(UART_MODE_RS485_HALF_DUPLEX);   // DE = RTS, activo durante TX
+  if (open_) ser_.end();
+  ser_.setRxBufferSize(1024);
+  ser_.begin(baud, serialConfigOf(dataBits, parity, stopBits), rx_, tx_);
+  if (de_ >= 0) {
+    ser_.setPins(rx_, tx_, -1, de_);
+    ser_.setMode(UART_MODE_RS485_HALF_DUPLEX);   // DE = RTS, activo durante TX
   }
-  port.setRxTimeout(1);   // entrega los bytes al driver tras 1 caracter de silencio
-  while (port.available()) port.read();
+  ser_.setRxTimeout(1);   // entrega los bytes al driver tras 1 caracter de silencio
+  while (ser_.available()) ser_.read();
+  baud_ = baud;
+  open_ = true;
 }
 
-uint32_t rtuGapUs() { return s_gapUs; }
-
-bool rtuLock(uint32_t waitMs) {
-  return s_mtx && xSemaphoreTake(s_mtx, pdMS_TO_TICKS(waitMs)) == pdTRUE;
+void RtuPort::close() {
+  if (open_) ser_.end();
+  open_ = false;
 }
-void rtuUnlock() { if (s_mtx) xSemaphoreGive(s_mtx); }
 
 uint16_t rtuCrc(const uint8_t* d, size_t n) {
   uint16_t crc = 0xFFFF;
@@ -62,6 +53,12 @@ uint16_t rtuCrc(const uint8_t* d, size_t n) {
     for (int i = 0; i < 8; i++) crc = (crc & 1) ? (crc >> 1) ^ 0xA001 : crc >> 1;
   }
   return crc;
+}
+
+bool rtuCrcOk(const uint8_t* d, size_t n) {
+  if (n < 4) return false;
+  uint16_t c = rtuCrc(d, n - 2);
+  return (c & 0xFF) == d[n - 2] && (c >> 8) == d[n - 1];
 }
 
 size_t rtuExpectedLen(const uint8_t* b, size_t n, bool request) {
@@ -81,6 +78,8 @@ size_t rtuExpectedLen(const uint8_t* b, size_t n, bool request) {
         return 10;
       case 0x17:
         return n >= 11 ? 13 + b[10] : 0;
+      case 0x2B:
+        return 7;                                  // MEI 0x0E: uid fc 0E code obj crc crc
       default:
         return 0;
     }
@@ -97,41 +96,62 @@ size_t rtuExpectedLen(const uint8_t* b, size_t n, bool request) {
     case 0x16:
       return 10;
     default:
-      return 0;
+      return 0;                                    // 0x2B y otras: fin por silencio
   }
 }
 
-// Lee una trama. 0 si no llego nada dentro de firstMs.
-static size_t readFrame(uint8_t* buf, size_t max, uint32_t firstMs) {
+size_t RtuPort::readFrame(uint8_t* buf, size_t max, uint32_t firstMs, bool request) {
   uint32_t t0 = millis();
-  while (!port.available()) {
+  while (!ser_.available()) {
     if (millis() - t0 >= firstMs) return 0;
     vTaskDelay(1);
   }
   size_t n = 0;
   uint32_t last = micros();
   for (;;) {
-    while (port.available()) {
-      int c = port.read();
+    while (ser_.available()) {
+      int c = ser_.read();
       if (n < max) buf[n++] = (uint8_t)c;
       last = micros();
     }
-    size_t exp = rtuExpectedLen(buf, n, false);
+    size_t exp = rtuExpectedLen(buf, n, request);
     if (exp && n >= exp) break;
     if (n >= max) break;
-    if (micros() - last > s_gapUs) break;
+    if (micros() - last > gapUs_) break;
     vTaskDelay(1);
   }
   return n;
 }
 
-RtuResult rtuTransact(const uint8_t* req, size_t reqLen,
-                      uint8_t* resp, size_t& respLen, size_t respMax,
-                      uint32_t& latencyMs, uint16_t timeoutMs, int8_t retries) {
+size_t RtuPort::sniff(uint8_t* buf, size_t max, uint32_t waitMs) {
+  if (!open_) return 0;
+  // en escucha pasiva no se sabe si es peticion o respuesta: se corta por silencio
+  uint32_t t0 = millis();
+  while (!ser_.available()) {
+    if (millis() - t0 >= waitMs) return 0;
+    vTaskDelay(1);
+  }
+  size_t n = 0;
+  uint32_t last = micros();
+  for (;;) {
+    while (ser_.available()) {
+      int c = ser_.read();
+      if (n < max) buf[n++] = (uint8_t)c;
+      last = micros();
+    }
+    if (n >= max || micros() - last > gapUs_) break;
+    vTaskDelay(1);
+  }
+  return n;
+}
+
+RtuResult RtuPort::transact(const uint8_t* req, size_t reqLen, uint8_t* resp, size_t& respLen,
+                            size_t respMax, uint32_t& latencyMs, uint16_t timeoutMs, int8_t retries) {
+  const PortCfg& c = cfg.port[idx_];
   respLen = 0;
   latencyMs = 0;
-  if (reqLen < 2 || reqLen > RTU_MAX_ADU - 2) return RTU_BADFRAME;
-  if (!timeoutMs) timeoutMs = cfg.respTimeoutMs;
+  if (!open_ || reqLen < 2 || reqLen > RTU_MAX_ADU - 2) return RTU_BADFRAME;
+  if (!timeoutMs) timeoutMs = c.respTimeoutMs;
 
   uint8_t tx[RTU_MAX_ADU];
   memcpy(tx, req, reqLen);
@@ -140,37 +160,36 @@ RtuResult rtuTransact(const uint8_t* req, size_t reqLen,
   tx[reqLen + 1] = crc >> 8;
   size_t txLen = reqLen + 2;
   bool bcast = (req[0] == 0);
-  uint8_t maxTry = bcast ? 0 : (retries < 0 ? cfg.retries : (uint8_t)retries);
+  uint8_t maxTry = bcast ? 0 : (retries < 0 ? c.retries : (uint8_t)retries);
 
   RtuResult res = RTU_TIMEOUT;
   uint8_t rx[RTU_MAX_ADU];
 
   for (uint8_t attempt = 0; attempt <= maxTry; attempt++) {
     // turnaround: silencio minimo entre transacciones del bus
-    while (millis() - s_lastEndMs < cfg.turnaroundMs) vTaskDelay(1);
-    while (port.available()) port.read();          // descarta basura previa
+    while (millis() - lastEndMs_ < c.turnaroundMs) vTaskDelay(1);
+    while (ser_.available()) ser_.read();          // descarta basura previa
 
-    port.write(tx, txLen);
-    port.flush();                                  // espera a que salga el ultimo bit
-    gwTrace(TR_RTU_TX, tx, txLen, attempt ? "reintento" : nullptr);
+    ser_.write(tx, txLen);
+    ser_.flush();                                  // espera a que salga el ultimo bit
+    gwTrace(TR_RTU_TX, idx_, tx, txLen, attempt ? "reintento" : nullptr);
     uint32_t tSent = millis();
 
     if (bcast) {
-      vTaskDelay(pdMS_TO_TICKS(cfg.bcastDelayMs));
-      s_lastEndMs = millis();
+      vTaskDelay(pdMS_TO_TICKS(c.bcastDelayMs));
+      lastEndMs_ = millis();
       return RTU_BCAST;
     }
 
-    size_t n = readFrame(rx, sizeof(rx), timeoutMs);
-    s_lastEndMs = millis();
-    latencyMs = s_lastEndMs - tSent;
-    if (!n) { res = RTU_TIMEOUT; gwTrace(TR_EVENT, nullptr, 0, "timeout"); continue; }
-    gwTrace(TR_RTU_RX, rx, n, nullptr);
+    size_t n = readFrame(rx, sizeof(rx), timeoutMs, false);
+    lastEndMs_ = millis();
+    latencyMs = lastEndMs_ - tSent;
+    if (!n) { res = RTU_TIMEOUT; gwTrace(TR_EVENT, idx_, nullptr, 0, "timeout"); continue; }
+    gwTrace(TR_RTU_RX, idx_, rx, n, nullptr);
 
     if (n < 4) { res = RTU_BADFRAME; continue; }
-    uint16_t c = rtuCrc(rx, n - 2);
-    if ((c & 0xFF) != rx[n - 2] || (c >> 8) != rx[n - 1]) { res = RTU_CRC; gwTrace(TR_EVENT, nullptr, 0, "CRC invalido"); continue; }
-    if (rx[0] != req[0] || (rx[1] & 0x7F) != req[1]) { res = RTU_BADFRAME; gwTrace(TR_EVENT, nullptr, 0, "trama ajena"); continue; }
+    if (!rtuCrcOk(rx, n)) { res = RTU_CRC; gwTrace(TR_EVENT, idx_, nullptr, 0, "CRC invalido"); continue; }
+    if (rx[0] != req[0] || (rx[1] & 0x7F) != req[1]) { res = RTU_BADFRAME; gwTrace(TR_EVENT, idx_, nullptr, 0, "trama ajena"); continue; }
 
     respLen = min(n - 2, respMax);
     memcpy(resp, rx, respLen);
@@ -186,6 +205,7 @@ const char* rtuResultStr(RtuResult r) {
     case RTU_CRC:      return "CRC";
     case RTU_BADFRAME: return "trama invalida";
     case RTU_BCAST:    return "broadcast";
+    case RTU_OFFLINE:  return "esclavo caido";
   }
   return "?";
 }

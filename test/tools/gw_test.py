@@ -27,6 +27,7 @@ import struct
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 
 # ---------------------------------------------------------------------------
@@ -424,16 +425,110 @@ def t_latency(c: Ctx):
     return f"{len(lat)} x FC03(10): min {lat[0]:.0f}  media {statistics.mean(lat):.0f}  p95 {p95:.0f}  max {lat[-1]:.0f} ms"
 
 
+def http(c: Ctx, path: str, body=None, timeout=15):
+    """GET/POST a la API web con HTTP Basic (o X-API-Key si se dio --api-key). -> (codigo, json)"""
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(f"http://{c.a.host}{path}", data=data)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    if c.a.api_key:
+        req.add_header("X-API-Key", c.a.api_key)
+    else:
+        tok = base64.b64encode(f"{c.a.user}:{c.a.password}".encode()).decode()
+        req.add_header("Authorization", "Basic " + tok)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.load(e)
+        except Exception:  # noqa: BLE001
+            return e.code, {}
+
+
 def t_api(c: Ctx):
-    url = f"http://{c.a.host}/api/status"
-    req = urllib.request.Request(url)
-    tok = base64.b64encode(f"{c.a.user}:{c.a.password}".encode()).decode()
-    req.add_header("Authorization", "Basic " + tok)
-    with urllib.request.urlopen(req, timeout=5) as r:
-        s = json.load(r)
+    _, s = http(c, "/api/status")
     st = s["gw"]["stats"]
     expect(s["gw"]["listening"], "el servidor Modbus no escucha")
-    return f"FW {s['fw']}  pet={st['tcpReq']} ok={st['ok']} timeout={st['timeout']} crc={st['crc']}  heap {s['heap'] // 1024} kB"
+    expect(s.get("state") in ("OK", "FALLAS", "DESCONECTADO", "SIN TRAFICO", "LAN DESCONECTADA"), f"estado desconocido {s.get('state')}")
+    return f"FW {s['fw']}  estado {s['state']}  pet={st['tcpReq']} ok={st['ok']} timeout={st['timeout']} heap {s['heap'] // 1024} kB"
+
+
+def t_fastfail(c: Ctx):
+    """Tras N timeouts seguidos el esclavo queda 'caido' y se responde 0x0B al instante."""
+    k = c.client(timeout=c.a.rtu_timeout * 2 + 3)
+    times = []
+    for _ in range(c.a.off_after + 2):
+        t0 = time.time()
+        try:
+            k.read_regs(c.a.missing, 3, 0, 1)
+        except ModbusError as e:
+            expect(e.code == 0x0B, f"se esperaba 0x0B, llego 0x{e.code:02X}")
+        times.append((time.time() - t0) * 1000)
+    k.close()
+    fast = times[-1]
+    expect(fast < c.a.rtu_timeout * 1000 / 2, f"el esclavo caido sigue tardando {fast:.0f} ms (esperado inmediato)")
+    _, s = http(c, "/api/status")
+    sl = [x for x in s["gw"]["slaves"] if x["uid"] == c.a.missing]
+    st = sl[0]["state"] if sl else "?"
+    expect(st == "DESCONECTADO", f"el esclavo {c.a.missing} figura como {st}")
+    return f"timeouts {[round(t) for t in times[:c.a.off_after]]} ms -> luego {fast:.0f} ms; estado {st}"
+
+
+def t_rest_read(c: Ctx):
+    code, j = http(c, f"/api/read?uid={c.uid}&fc=3&addr=20&qty=5&cache=0")
+    expect(code == 200 and j.get("ok"), f"HTTP {code} {j}")
+    expect(j["values"] == [hr_val(c.uid, 20 + i) for i in range(5)], f"valores {j['values']}")
+    return f"/api/read -> {j['values']} en {j['lat']} ms"
+
+
+def t_rest_write(c: Ctx):
+    v = random.randint(0, 0xFFFF)
+    code, j = http(c, "/api/write", {"uid": c.uid, "fc": 6, "addr": 800, "value": v})
+    expect(code == 200 and j.get("ok"), f"HTTP {code} {j}")
+    _, j = http(c, f"/api/read?uid={c.uid}&fc=3&addr=800&qty=1&cache=0")
+    expect(j.get("values") == [v], f"relectura {j.get('values')} != {v}")
+    return f"/api/write FC06 {v} + relectura"
+
+
+def t_tags(c: Ctx):
+    code, j = http(c, "/api/tags")
+    expect(code == 200, f"HTTP {code}")
+    return f"{len(j['tags'])} entrada(s) en la tabla de sondeo"
+
+
+def t_cache(c: Ctx):
+    """Requiere --cache: entrada de sondeo P1, esclavo --ids[0], FC03 addr 0 qty>=10 y cache activa en el puerto."""
+    if not c.a.cache:
+        return "SKIP: use --cache (ver test/README.md)"
+    _, s0 = http(c, "/api/status")
+    k = c.client()
+    lat = []
+    for _ in range(30):
+        t0 = time.perf_counter()
+        v = k.read_regs(c.uid, 3, 0, 10)
+        lat.append((time.perf_counter() - t0) * 1000)
+        expect(v == [hr_val(c.uid, i) for i in range(10)], f"valores {v}")
+    k.close()
+    _, s1 = http(c, "/api/status")
+    hits = s1["gw"]["stats"]["cache"] - s0["gw"]["stats"]["cache"]
+    expect(hits >= 25, f"solo {hits} de 30 lecturas salieron de la cache")
+    return f"{hits}/30 desde cache, latencia media {statistics.mean(lat):.1f} ms"
+
+
+def t_readonly(c: Ctx):
+    """Requiere --ro-uid N: una regla de solo lectura que cubra al esclavo N (puerto 1)."""
+    if not c.a.ro_uid:
+        return "SKIP: use --ro-uid N (ver test/README.md)"
+    k = c.client()
+    try:
+        k.write_reg(c.a.ro_uid, 900, 1)
+    except ModbusError as e:
+        expect(e.code == 0x01, f"se esperaba 0x01, llego 0x{e.code:02X}")
+        return "escritura bloqueada con excepcion 0x01"
+    finally:
+        k.close()
+    raise AssertionError("la escritura paso: la regla de solo lectura no actuo")
 
 
 TESTS = [
@@ -454,7 +549,13 @@ TESTS = [
     ("concurrency", "Clientes simultaneos", t_concurrency),
     ("maxclients", "Limite de conexiones", t_maxclients),
     ("latency", "Latencia extremo a extremo", t_latency),
-    ("api", "API web /api/status", t_api),
+    ("api", "API web /api/status + estado", t_api),
+    ("fastfail", "Esclavo caido -> 0x0B inmediato", t_fastfail),
+    ("restread", "API REST /api/read", t_rest_read),
+    ("restwrite", "API REST /api/write", t_rest_write),
+    ("tags", "API REST /api/tags", t_tags),
+    ("cache", "Modo cache (opcional)", t_cache),
+    ("readonly", "Solo lectura (opcional)", t_readonly),
 ]
 
 
@@ -531,6 +632,10 @@ def main() -> None:
     ap.add_argument("--rtu-over-tcp", action="store_true")
     ap.add_argument("--user", default="admin")
     ap.add_argument("--password", default="admin")
+    ap.add_argument("--api-key", default="", help="usar X-API-Key en vez de usuario/clave")
+    ap.add_argument("--off-after", type=int, default=3, help="'Marcar caido tras' del puerto 1")
+    ap.add_argument("--cache", action="store_true", help="probar el modo cache (requiere configurarlo)")
+    ap.add_argument("--ro-uid", type=int, default=0, help="esclavo cubierto por una regla de solo lectura")
     ap.add_argument("--only", help="lista de pruebas, p.ej. fc03,latency")
     ap.add_argument("--soak", type=int, default=0, metavar="SEG", help="prueba de duracion en vez de la bateria")
     ap.add_argument("--list", action="store_true")
