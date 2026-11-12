@@ -22,6 +22,7 @@ NOTA SOBRE CHAPA
 """
 
 import math
+import os
 import adsk.core
 import adsk.fusion
 import traceback
@@ -42,7 +43,11 @@ WIN_Z0     = 6.0           # separacion de la ventana respecto al fondo
 PCB_W, PCB_H   = 95.0, 72.0
 PCB_HOLE_IN    = 4.0
 M3             = 3.2
-DIN_X, DIN_Y   = 30.0, 22.0
+M2             = 2.4
+# Anclaje DIN comercial: 3 agujeros M2 a 11 mm entre centros, clip en vertical.
+DIN_X          = 30.0      # separacion horizontal entre los dos clips
+DIN_P          = 11.0      # paso entre taladros
+DIN_N          = 3         # taladros por clip
 FLANGE         = 12.0
 RELIEF         = 2.0
 COVER_SCREW_IN = 10.0
@@ -67,6 +72,24 @@ def _pt(x, y, z=0.0):
     return adsk.core.Point3D.create(mm(x), mm(y), mm(z))
 
 
+def biggest_profile(sk):
+    """Devuelve el perfil cerrado de mayor area del boceto.
+
+    profiles.item(0) no sirve: un boceto con arcos puede generar varias
+    regiones y la primera suele ser un recorte suelto.
+    """
+    best, best_area = None, -1.0
+    for i in range(sk.profiles.count):
+        p = sk.profiles.item(i)
+        try:
+            a = p.areaProperties().area
+        except:
+            continue
+        if a > best_area:
+            best, best_area = p, a
+    return best
+
+
 def u_profile(sk, w_in, h_in, depth, t, r):
     """Dibuja el perfil cerrado de un canal en U con radios de doblado reales.
 
@@ -78,47 +101,59 @@ def u_profile(sk, w_in, h_in, depth, t, r):
     ro = r + t
     hw = h_in
 
+    # Los barridos son NEGATIVOS (horario). Con +pi/2 los arcos salen hacia
+    # fuera, el contorno no cierra y la extrusion produce una tira plana.
+    q = -math.pi / 2
     # ---- contorno interior, de fuera hacia dentro
     L.addByTwoPoints(_pt(depth, 0.0), _pt(r, 0.0))
-    A.addByCenterStartSweep(_pt(r, r), _pt(r, 0.0), math.pi / 2)
+    A.addByCenterStartSweep(_pt(r, r), _pt(r, 0.0), q)
     L.addByTwoPoints(_pt(0.0, r), _pt(0.0, hw - r))
-    A.addByCenterStartSweep(_pt(r, hw - r), _pt(0.0, hw - r), math.pi / 2)
+    A.addByCenterStartSweep(_pt(r, hw - r), _pt(0.0, hw - r), q)
     L.addByTwoPoints(_pt(r, hw), _pt(depth, hw))
     # ---- tapas de los extremos
     L.addByTwoPoints(_pt(depth, hw), _pt(depth, hw + t))
     L.addByTwoPoints(_pt(depth, 0.0), _pt(depth, -t))
     # ---- contorno exterior
     L.addByTwoPoints(_pt(depth, -t), _pt(r, -t))
-    A.addByCenterStartSweep(_pt(r, r), _pt(r, -t), math.pi / 2)
+    A.addByCenterStartSweep(_pt(r, r), _pt(r, -t), q)
     L.addByTwoPoints(_pt(-t, r), _pt(-t, hw - r))
-    A.addByCenterStartSweep(_pt(r, hw - r), _pt(-t, hw - r), math.pi / 2)
+    A.addByCenterStartSweep(_pt(r, hw - r), _pt(-t, hw - r), q)
     L.addByTwoPoints(_pt(-t, hw + t), _pt(depth, hw + t))
-    return sk.profiles.item(0)
+    return biggest_profile(sk)
 
 
-def cut_box(comp, x, y, z, dx, dy, dz):
-    """Resta un prisma recto definido por esquina y tamano, en mm."""
+def cut_box(comp, body, x, y, z, dx, dy, dz):
+    """Resta un prisma recto definido por esquina y tamano, en mm.
+
+    participantBodies es obligatorio: sin el, Fusion lanza
+    "No se ha encontrado ningun cuerpo de destino para cortar o intersecar".
+    """
     planes = comp.constructionPlanes
     ipt = planes.createInput()
     ipt.setByOffset(comp.xYConstructionPlane,
                     adsk.core.ValueInput.createByReal(mm(z)))
     pl = planes.add(ipt)
+    pl.isLightBulbOn = False
     sk = comp.sketches.add(pl)
+    sk.isLightBulbOn = False
     sk.sketchCurves.sketchLines.addTwoPointRectangle(_pt(x, y), _pt(x + dx, y + dy))
     ext = comp.features.extrudeFeatures.createInput(
         sk.profiles.item(0),
         adsk.fusion.FeatureOperations.CutFeatureOperation)
     ext.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm(dz)))
+    ext.participantBodies = [body]
     comp.features.extrudeFeatures.add(ext)
 
 
-def hole(comp, plane, x, y, depth, d=M3):
+def hole(comp, body, plane, x, y, depth, d=M3):
     sk = comp.sketches.add(plane)
+    sk.isLightBulbOn = False
     sk.sketchCurves.sketchCircles.addByCenterRadius(_pt(x, y), mm(d / 2.0))
     ext = comp.features.extrudeFeatures.createInput(
         sk.profiles.item(0),
         adsk.fusion.FeatureOperations.CutFeatureOperation)
     ext.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm(depth)))
+    ext.participantBodies = [body]
     comp.features.extrudeFeatures.add(ext)
 
 
@@ -131,12 +166,14 @@ def build_chasis(root):
     ext = c.features.extrudeFeatures.createInput(
         prof, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
     ext.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm(W_INT)))
-    c.features.extrudeFeatures.add(ext)
+    feat = c.features.extrudeFeatures.add(ext)
+    body = feat.bodies.item(0)
+    body.name = "Chasis en U"
 
     # ventana de la bornera inferior (pared en y<0)
-    cut_box(c, WIN_Z0, -T - 1.0, (W_INT - J2_W) / 2.0, J2_H, T + 2.0, J2_W)
+    cut_box(c, body, WIN_Z0, -T - 1.0, (W_INT - J2_W) / 2.0, J2_H, T + 2.0, J2_W)
     # ventana de la bornera superior
-    cut_box(c, WIN_Z0, H_INT - 1.0, (W_INT - J1_W) / 2.0, J1_H, T + 2.0, J1_W)
+    cut_box(c, body, WIN_Z0, H_INT - 1.0, (W_INT - J1_W) / 2.0, J1_H, T + 2.0, J1_W)
 
     # taladros del PCB y de los clips, en el dorso (plano YZ desplazado)
     planes = c.constructionPlanes
@@ -147,10 +184,12 @@ def build_chasis(root):
     bz0 = (W_INT - PCB_W) / 2.0 + PCB_HOLE_IN
     for dy in (0.0, PCB_H - 2 * PCB_HOLE_IN):
         for dz in (0.0, PCB_W - 2 * PCB_HOLE_IN):
-            hole(c, back, bx0 + dy, bz0 + dz, T + 1.0)
-    for sy in (-DIN_Y, DIN_Y):
-        for sz in (-DIN_X, DIN_X):
-            hole(c, back, H_INT / 2.0 + sy, W_INT / 2.0 + sz, T + 1.0)
+            hole(c, body, back, bx0 + dy, bz0 + dz, T + 1.0)
+    span = (DIN_N - 1) * DIN_P
+    for sz in (-DIN_X, DIN_X):
+        for i in range(DIN_N):
+            hole(c, body, back, H_INT / 2.0 - span / 2.0 + i * DIN_P,
+                 W_INT / 2.0 + sz, T + 1.0, M2)
     return c
 
 
@@ -165,9 +204,11 @@ def build_tapa(root):
     ext = c.features.extrudeFeatures.createInput(
         prof, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
     ext.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm(W_COVER)))
-    c.features.extrudeFeatures.add(ext)
+    feat = c.features.extrudeFeatures.add(ext)
+    body = feat.bodies.item(0)
+    body.name = "Tapa en U"
     # ventana del RJ45 en el lateral (ala inferior del perfil)
-    cut_box(c, WIN_Z0, -T - 1.0, (W_COVER - RJ_W) / 2.0, RJ_W, T + 2.0, RJ_H)
+    cut_box(c, body, WIN_Z0, -T - 1.0, (W_COVER - RJ_W) / 2.0, RJ_W, T + 2.0, RJ_H)
     return c
 
 
@@ -204,18 +245,22 @@ def build_clip(root):
         b = prof_pts[(i + 1) % len(prof_pts)]
         L.addByTwoPoints(_pt(a[0], a[1]), _pt(b[0], b[1]))
     ext = c.features.extrudeFeatures.createInput(
-        sk.profiles.item(0), adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+        biggest_profile(sk), adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
     ext.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm(CLIP_W)))
-    c.features.extrudeFeatures.add(ext)
+    feat = c.features.extrudeFeatures.add(ext)
+    body = feat.bodies.item(0)
+    body.name = "Clip DIN (repuesto imprimible)"
 
-    # dos taladros M3 avellanados pasantes, fuera del paso del riel
-    for sx in (-DIN_Y, DIN_Y):
+    # taladros de fijacion, al paso del anclaje comercial
+    for sx in (-DIN_P, 0.0, DIN_P):
         sk2 = c.sketches.add(c.xYConstructionPlane)
+        sk2.isLightBulbOn = False
         sk2.sketchCurves.sketchCircles.addByCenterRadius(
-            _pt(sx, CLIP_BASE / 2.0), mm(M3 / 2.0))
+            _pt(sx, CLIP_BASE / 2.0), mm(M2 / 2.0))
         e2 = c.features.extrudeFeatures.createInput(
             sk2.profiles.item(0), adsk.fusion.FeatureOperations.CutFeatureOperation)
         e2.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm(CLIP_W)))
+        e2.participantBodies = [body]
         c.features.extrudeFeatures.add(e2)
     return c
 
@@ -231,11 +276,41 @@ def run(context):
         design.fusionUnitsManager.distanceDisplayUnits = \
             adsk.fusion.DistanceUnits.MillimeterDistanceUnits
         root = design.rootComponent
-        root.name = "Carcasa ayModbusConverter MINI"
+        # Ojo: Fusion no permite renombrar el componente raiz desde la API
+        # (RuntimeError 3). El nombre se pone al guardar el documento.
 
         build_chasis(root)
         build_tapa(root)
         build_clip(root)
+
+        # Informe de comprobacion en disco: cotas reales de cada cuerpo.
+        # Mas fiable que mirar la pantalla, y permite verificar sin Fusion.
+        lineas = ["Informe de la carcasa ayModbusConverter MINI", ""]
+        for occ in root.occurrences:
+            comp = occ.component
+            for b in comp.bRepBodies:
+                bb = b.boundingBox
+                dx = (bb.maxPoint.x - bb.minPoint.x) * 10.0
+                dy = (bb.maxPoint.y - bb.minPoint.y) * 10.0
+                dz = (bb.maxPoint.z - bb.minPoint.z) * 10.0
+                lineas.append(
+                    "{:<12} {:<32} caja {:7.2f} x {:7.2f} x {:7.2f} mm"
+                    "   volumen {:9.1f} mm3   area {:9.1f} mm2".format(
+                        comp.name, b.name, dx, dy, dz,
+                        b.volume * 1000.0, b.area * 100.0))
+        esperado = [
+            "", "Esperado:",
+            "  Chasis  caja  {:.1f} x {:.1f} x {:.1f} mm".format(
+                D_INT + T, H_INT + 2 * T, W_INT),
+            "  Tapa    caja  {:.1f} x {:.1f} x {:.1f} mm".format(
+                D_SIDE + T, H_COVER + 2 * T, W_COVER),
+            "  Si la primera cota del chasis sale ~1 mm, el perfil en U fallo",
+            "  y solo se extruyo el dorso.",
+        ]
+        destino = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "reporte.txt")
+        with open(destino, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lineas + esperado))
 
         ui.messageBox(
             "Carcasa creada.\n\n"
