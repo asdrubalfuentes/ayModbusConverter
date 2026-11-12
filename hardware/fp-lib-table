@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "aymc")(type "KiCad")(uri "${KIPRJMOD}/aymc.pretty")(options "")(descr "Huellas portadora ayModbusConverter"))
+)

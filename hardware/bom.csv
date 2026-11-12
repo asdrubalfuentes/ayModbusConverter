@@ -1,0 +1,28 @@
+Ref,Cant,Valor,Descripcion,Notas
+MOD1,1,WT32-ETH01 V1.4,ESP32 + LAN8720A + RJ45; va enchufado,"2 zocalos hembra 1x13 paso 2,54"
+U1,1,K7805-2000R3,DC/DC 24V->5V 2A SIP-3,Alt.: TRACO TSR 1-2450
+U2,1,MAX485ESA,Transceptor RS-485 half duplex SOIC-8,"MAX3485/SP3485 si JP1 en 3,3 V"
+J1,1,Bornera 2 vias,Entrada 24 VDC,"Paso 5,08 mm"
+J2,1,Bornera 3 vias,RS-485: A / B / GND,"Paso 5,08 mm"
+J3,1,Header 6 vias,Consola serie y primera grabacion,"Paso 2,54 mm, interno"
+JP1,1,Header 3 vias,Seleccion VCC del transceptor,"1-2 = 5 V, 2-3 = 3,3 V"
+JP2,1,Header 2 vias,Habilita la terminacion de 120 ohm,Cerrar solo en extremo de bus
+F1,1,PTC 500 mA,Proteccion de entrada,"Rearmable, 60 V"
+D1,1,SS34,Schottky antiinversion SMA,
+D2,1,SMBJ33A,TVS unidireccional 33 V SMB,
+D3,1,LED verde 0805,Indicador de alimentacion,
+D4,1,SM712,TVS asimetrica -7/+12 V SOT-23,Especifica para RS-485
+D5,1,LED ambar 0805,Actividad Modbus (IO2),
+C1,1,22 uF / 50 V,Electrolitico de entrada,
+C3,1,22 uF / 16 V,Electrolitico de salida,
+C8,1,10 uF / 16 V,Retardo de arranque en EN,CLAVE: evita cuelgues con rampa lenta
+"C2,C4,C5,C7",4,100 nF,Desacoplo y antirrebote,0805 X7R
+"R1,R11",2,1 k,Limitadores de LED,0805
+R2,1,1 k,Divisor de RO (superior),"0 ohm si VCC485 = 3,3 V"
+R3,1,2 k,Divisor de RO (inferior),"Sin poblar si VCC485 = 3,3 V"
+R4,1,"120 ohm 0,5 W",Terminacion de fin de linea,Se habilita con JP2
+"R5,R6",2,560 ohm,Polarizacion de bus,Una sola vez por segmento
+"R7,R8",2,10 ohm,Antipulso en serie,Tipo pulse-proof
+R10,1,"100 ohm 0,5 W",Retorno del comun del bus (borne GND),Clave sin aislamiento
+R14,1,10 k,Pull-up de EN,"NO POBLAR, huella de reserva"
+SW1,1,Pulsador 6x6,Boton CFG (IO32),"Corta=pagina, 3s=AP, 10s=fabrica"
