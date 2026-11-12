@@ -2,13 +2,13 @@ Ref,Valor,Huella,Descripcion
 J1,Bornera 4 vias 5.08,TERM4,A / B / +V(9-24Vdc) / GND
 J2,Zocalo hembra 1x13,HDR13,"Fila A del WT32-ETH01, pines 1-13"
 J3,Zocalo hembra 1x13,HDR13,"Fila B del WT32-ETH01, pines 14-26"
-U1,7805 TO-220,TO220,Regulador lineal +V -> 5V
-C2,0.33uF,CER254,Entrada del 7805
-C1,100uF/25V,ELEC5,Salida del 7805
-C3,100nF,CER254,Desacoplo del MAX485
+U1,7805 TO-220,TO220,Regulador +V -> 5V (admite K7805-2000R3)
+C2,0.33uF,CER254,Entrada
+C1,100uF/25V,ELEC5,Salida
+C3,100nF,CER254,Desacoplo MAX485
 U2,MAX485 DIP-8,DIP8,Transceptor RS-485 half duplex
-R2,1k,AXIAL254,"Divisor RO, superior"
-R3,2k,AXIAL254,"Divisor RO, inferior"
+R2,1k,AXIAL254,Divisor RO sup.
+R3,2k,AXIAL254,Divisor RO inf.
 R1,120R,AXIAL254,Terminacion de linea
-R4,1k,AXIAL254,Limitador del LED
+R4,1k,AXIAL254,Limitador LED
 D1,LED 3mm,LED254,Enlace Modbus

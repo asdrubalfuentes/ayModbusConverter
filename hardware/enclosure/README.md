@@ -11,17 +11,19 @@ bases de riel DIN impresas en 3D.
 
 | Pieza | Material | Dobleces | Desarrollo |
 |---|---|:-:|---|
-| 1 · Chasis en U | Inox 304, 1,0 mm | 2 | 104,0 × 162,3 mm |
-| 2 · Tapa en U | Inox 304, 1,0 mm | 4 | 182,3 × 108,0 mm |
+| 1 · Chasis en U | Inox 304, 1,0 mm | 2 | 78,0 × 140,3 mm |
+| 2 · Tapa en U | Inox 304, 1,0 mm | 4 | 148,3 × 94,0 mm |
 | 3 · Clip DIN ×2 | PETG o ABS | — | impreso |
 
-Chapa bruta: **366 cm² por equipo**, unos **289 g** de inoxidable.
+Chapa bruta: **249 cm² por equipo**, unos **197 g** de inoxidable.
 
-El **chasis** lleva el fondo y las dos paredes donde se apoyan las borneras: la ventana
-superior sostiene J1 (24 VDC) y la inferior J2 (RS-485 A/B/GND). El PCB se atornilla al
-fondo sobre cuatro separadores de 6 mm. La **tapa** envuelve el frente y los dos
-laterales, con la ventana del RJ45 en el costado izquierdo y rejilla de ventilación en el
-derecho; se fija con cuatro tornillos M3 a través de dos pestañas.
+**Todas las aberturas van en el chasis.** La pared inferior lleva la ventana de la bornera
+de 4 vías y la superior la del RJ45 del módulo, que sale por ahí porque el módulo va con
+el eje largo vertical. El PCB se atornilla al fondo sobre cuatro separadores de 6 mm.
+
+La **tapa** envuelve el frente y los dos laterales y solo tiene **un agujero de 3,2 mm para
+el LED de enlace**, más la rejilla de ventilación del costado derecho. Se fija con cuatro
+tornillos M3 a través de dos pestañas.
 
 Las borneras quedan **retenidas por la chapa**: el cuerpo del conector asoma por la
 ventana y la pared de 1 mm absorbe el esfuerzo del cable, en lugar de transmitirlo a las
@@ -33,7 +35,7 @@ soldaduras del PCB. Es la razón de que las ventanas sean ajustadas.
 
 | Concepto | Valor |
 |---|---|
-| Interior | 104 × 82 × 40 mm |
+| Interior | 78 × 68 × 36 mm |
 | Espesor | 1,0 mm |
 | Radio interior de doblado | 1,0 mm |
 | Factor K | 0,44 (inox recocido) |
@@ -41,8 +43,8 @@ soldaduras del PCB. Es la razón de que las ventanas sean ajustadas.
 | Deducción de doblado | 1,738 mm |
 | Alivio de esquina | 2,0 mm |
 
-Altura ocupada dentro de la caja: 6 mm de separador + 1,6 de PCB + 26 del módulo con
-zócalos = **33,6 mm** de los 40 disponibles. Quedan 6,4 mm de holgura.
+Altura ocupada dentro de la caja: 6 mm de separador + 1,6 de PCB + 8,5 de zócalo + 17 del
+módulo = **33,1 mm** de los 36 disponibles. Quedan 2,9 mm de holgura.
 
 > El factor K de 0,44 es el valor habitual del inoxidable recocido con radio igual al
 > espesor. Si tu taller trabaja con otro, cámbialo en `gen_carcasa.py` y vuelve a generar
@@ -193,13 +195,13 @@ El script comprueba solo estos rangos y marca `OK` o `MAL` en el informe.
 Cuatro cosas que conviene verificar contra el material real, porque salen de cotas
 nominales y no de piezas medidas:
 
-1. **Ventana del RJ45**: 17 × 14 mm, con unos 1,5 mm de holgura sobre un jack estándar.
-   Mide el del módulo que tengas antes de cortar.
-2. **Ventanas de las borneras**: dependen del fabricante del conector. Las de 5,08 mm de
-   paso varían entre marcas unos milímetros.
-3. **Posición del RJ45 en profundidad**: la ventana cubre de 16 a 33 mm desde el fondo,
-   calculada con zócalo de 8,5 mm. Si sueldas el módulo directamente, baja esa cota.
-4. **Altura de las borneras sobre el PCB**: las ventanas empiezan a 6 mm del fondo.
+1. **Ventana del RJ45**: 17 × 15 mm en la pared superior, a 14 mm del fondo. Mide el jack
+   de tu módulo antes de cortar; la holgura es de poco más de 1 mm.
+2. **Ventana de la bornera**: 24 × 16 mm en la pared inferior, a 6 mm del fondo. Depende
+   del fabricante del conector de 5,08.
+3. **Agujero del LED en la tapa**: Ø 3,2 mm, a Y = −21,3 mm y Z = +1,0 mm del centro.
+4. **Holgura en profundidad**: solo quedan 2,9 mm entre el módulo y la tapa. Si usas
+   zócalos torneados más altos, sube `D_INT`.
 
 Lo barato es cortar una pieza de prueba en acero al carbono o incluso en cartón de 1 mm
 antes de lanzar la tirada en inoxidable.

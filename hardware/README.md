@@ -1,8 +1,8 @@
 # PCB base — ayModbusConverter MINI
 
-Rev D · KiCad 8 · 95 × 72 mm, dos capas
+Rev E · KiCad 8 · **70 × 58 mm**, dos capas
 
-Placa atornillada al chasis, que a su vez va al riel DIN por los anclajes. La
+Placa reducida al mínimo práctico, atornillada al chasis, que a su vez va al riel DIN por los anclajes. La
 WT32-ETH01 se enchufa en dos zócalos de 13 pines con el **eje largo vertical**: el RJ45
 sale por la pared superior del chasis y la bornera por la inferior. La tapa solo lleva el
 agujero del LED de enlace.
@@ -190,12 +190,24 @@ desincronizarse. Si cambias algo, cámbialo en `gen_pcb.py` y vuelve a ejecutar 
 
 ---
 
-## 9. Pendiente
+## 9. Reducción respecto a la Rev D
 
-La mitad derecha de la placa está vacía: con esta lista de componentes cabría todo en unos
-70 × 72 mm. No la encogí porque el patrón de taladros del chasis está hecho para 95 × 72.
-Si quieres ahorrar placa, se cambian las dos cosas a la vez.
+| Concepto | Rev D | Rev E | Reducción |
+|---|---|---|---|
+| Placa | 95 × 72 mm | **70 × 58 mm** | 41 % de área |
+| Interior de la caja | 104 × 82 × 40 | **78 × 68 × 36** | 44 % de volumen |
+| Chapa bruta | 366 cm² | **249 cm²** | 32 % |
+| Masa de inoxidable | 289 g | **197 g** | 32 % |
 
-El chasis también necesita un retoque: antes tenía dos ventanas de bornera, arriba y abajo.
-Ahora hace falta **una ventana de bornera abajo y una de RJ45 arriba**, y la tapa pasa a
-llevar solo el agujero de 3 mm del LED.
+Qué permitió apretarla:
+
+- El MAX485, el divisor y la terminación se agruparon en la columna derecha junto a la
+  bornera, en vez de repartirse por la placa.
+- Los taladros de fijación pasaron a 5 mm del borde y la alimentación cruza por el borde
+  superior, a 2,5 mm, que es donde no estorba a nada.
+- El ancho de pista en señal bajó a 0,25 mm, lo justo para pasar entre pads a paso 2,54
+  con 0,2 mm de holgura. La alimentación se mantiene en 0,8 mm.
+
+El límite ahora lo pone el propio módulo: 60 mm de largo con el RJ45 asomando, más la
+bornera debajo sin solaparse con él. Para bajar de 58 mm de alto habría que mover la
+bornera a un costado, y entonces saldría por la tapa en vez de por el chasis.

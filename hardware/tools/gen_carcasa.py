@@ -12,24 +12,31 @@ os.makedirs(OUT, exist_ok=True)
 T      = 1.0     # espesor de la lamina (AISI 304)
 R      = 1.0     # radio interior de doblado
 K      = 0.44    # factor K tipico del inoxidable recocido
-W_INT  = 104.0   # ancho interior
-H_INT  = 82.0    # alto interior
-D_INT  = 40.0    # profundidad interior
+W_INT  = 78.0    # ancho interior (a lo largo del riel)
+H_INT  = 68.0    # alto interior
+D_INT  = 36.0    # profundidad interior
 FLANGE = 12.0    # pestana de atornillado de la tapa
 RELIEF = 2.0     # alivio de esquina
 
 # PCB y componentes (definen las ventanas)
-PCB_W, PCB_H = 95.0, 72.0
-J1_W,  J1_H  = 16.0, 16.0   # ventana bornera de 24 VDC (2 vias, paso 5,08)
-J2_W,  J2_H  = 22.0, 16.0   # ventana bornera RS-485   (3 vias, paso 5,08)
-RJ_W,  RJ_H  = 17.0, 14.0   # ventana RJ45 del modulo
-WIN_Z0       = 6.0          # separacion de la ventana respecto al fondo
+PCB_W, PCB_H = 70.0, 58.0
+# Una sola bornera de 4 vias abajo y el RJ45 arriba, ambos en el CHASIS.
+# La tapa solo lleva el agujero del LED.
+TERM_W, TERM_H = 24.0, 16.0   # ventana de la bornera, pared inferior
+RJ_W,   RJ_H   = 17.0, 15.0   # ventana del RJ45,     pared superior
+WIN_Z0  = 6.0                 # bornera: separacion respecto al fondo
+RJ_Z0   = 14.0                # RJ45: va mas alto, sobre los zocalos
+# Posicion a lo largo del riel, medida desde el centro de la placa
+TERM_OFF = 12.62              # centro de la bornera  (x 47,62 de la placa)
+RJ_OFF   = -15.57             # centro del RJ45       (x 19,43 de la placa)
+LED_OFF_Z, LED_OFF_Y = 1.0, -21.3   # agujero del LED en la TAPA
+LED_D = 3.2
 STANDOFF     = 6.0          # altura del separador del PCB
 
 # Montaje
 M3   = 3.2      # paso libre para M3
 M2   = 2.4      # paso libre para M2
-PCB_HOLE_IN = 4.0           # retranqueo de los taladros del PCB
+PCB_HOLE_IN = 5.0           # retranqueo de los taladros del PCB
 # Anclaje DIN comercial del usuario: 3 agujeros M2 a 11 mm entre centros,
 # repartidos a lo largo de la pieza. El clip se monta en vertical para que
 # cruce el riel horizontal; los 3 taladros quedan en columna.
@@ -101,13 +108,13 @@ d1.rect(0.0, 0.0, Lx, TOT_Y)
 d1.line(0.0, y0, Lx, y0, "DOBLEZ")
 d1.line(0.0, y0 + Ly, Lx, y0 + Ly, "DOBLEZ")
 
-# --- ventanas de las borneras en las paredes
-# pared inferior (y de 0 a y0): la ventana se mide desde la linea de doblez
-j2x = (Lx - J2_W) / 2.0
-d1.rect(j2x, y0 - WIN_Z0 - J2_H, J2_W, J2_H)
-# pared superior
-j1x = (Lx - J1_W) / 2.0
-d1.rect(j1x, y0 + Ly + WIN_Z0, J1_W, J1_H)
+# --- ventanas en las paredes del chasis
+# pared inferior: bornera de 4 vias
+tx = Lx / 2.0 + TERM_OFF - TERM_W / 2.0
+d1.rect(tx, y0 - WIN_Z0 - TERM_H, TERM_W, TERM_H)
+# pared superior: RJ45 del modulo
+rx = Lx / 2.0 + RJ_OFF - RJ_W / 2.0
+d1.rect(rx, y0 + Ly + RJ_Z0, RJ_W, RJ_H)
 
 # --- taladros de los separadores del PCB (en el fondo)
 px0 = (Lx - PCB_W) / 2.0 + PCB_HOLE_IN
@@ -166,9 +173,9 @@ d2.line(x0 + W_COVER, FLANGE, x0 + W_COVER, FLANGE + H_COVER, "DOBLEZ")
 d2.line(x0 + RELIEF, FLANGE, x0 + W_COVER - RELIEF, FLANGE, "DOBLEZ")
 d2.line(x0 + RELIEF, FLANGE + H_COVER, x0 + W_COVER - RELIEF, FLANGE + H_COVER, "DOBLEZ")
 
-# ventana del RJ45 en el lateral izquierdo
-rj_y = FLANGE + H_COVER / 2.0 - RJ_H / 2.0
-d2.rect(side_flat - WIN_Z0 - RJ_W, rj_y, RJ_W, RJ_H)
+# agujero del LED de enlace, unica abertura de la tapa
+d2.circle(x0 + W_COVER / 2.0 + LED_OFF_Z,
+          FLANGE + H_COVER / 2.0 - LED_OFF_Y, LED_D)
 
 # Taladros de la tapa. La pestana dobla en y=FLANGE y se apoya sobre la pared
 # del chasis, asi que la distancia del taladro a la linea de doblez debe ser la
@@ -197,7 +204,7 @@ print(f"allowance / deduccion: BA {BA:.3f} mm   BD {BD:.3f} mm")
 print()
 print(f"interior            : {W_INT} x {H_INT} x {D_INT} mm")
 print(f"PCB                 : {PCB_W} x {PCB_H} mm, separadores de {STANDOFF} mm")
-alt = STANDOFF + 1.6 + 26.0
+alt = STANDOFF + 1.6 + 8.5 + 17.0
 print(f"altura ocupada      : {alt:.1f} mm de {D_INT} mm -> holgura {D_INT-alt:.1f} mm")
 print()
 print(f"pieza 1 chasis      : desarrollo {Lx:.1f} x {TOT_Y:.1f} mm, 2 dobleces, {n1} entidades")
@@ -213,11 +220,13 @@ print("--- comprobaciones ---")
 chk = [
  ("PCB cabe en el interior", PCB_W < W_INT and PCB_H < H_INT),
  ("modulo + separadores caben en fondo", alt < D_INT),
- ("ventana J1 dentro de la pared", WIN_Z0 + J1_H < D_INT),
- ("ventana J2 dentro de la pared", WIN_Z0 + J2_H < D_INT),
- ("ventana RJ45 dentro del lateral", WIN_Z0 + RJ_W < side_flat),
+ ("ventana de bornera dentro de la pared", WIN_Z0 + TERM_H < D_INT),
+ ("ventana de RJ45 dentro de la pared", RJ_Z0 + RJ_H < D_INT),
+ ("bornera dentro del ancho", abs(TERM_OFF) + TERM_W/2 < W_INT/2),
+ ("RJ45 dentro del ancho", abs(RJ_OFF) + RJ_W/2 < W_INT/2),
+ ("LED dentro de la tapa", abs(LED_OFF_Y) + LED_D < H_COVER/2),
  ("clips DIN dentro del fondo",
-   2*DIN_X + CLIP_L < W_INT and DIN_SPAN + 12 < H_INT),
+   2*DIN_X + CLIP_WD < W_INT and CLIP_L < H_INT),
  ("riel de 35 mm libre entre los taladros del clip", DIN_SPAN > 35.0 - 20.0),
  ("alivio de esquina >= espesor", RELIEF >= T),
  ("radio de doblado >= espesor", R >= T),

@@ -20,11 +20,11 @@ PROJ = "aymc_carrier_min"
 def nu(): return str(uuid.uuid4())
 
 # ===================================================================== cotas
-BW, BH   = 95.0, 72.0        # placa
-HOLE_IN  = 4.0               # retranqueo de los taladros de fijacion
+BW, BH   = 70.0, 58.0        # placa reducida al minimo practico
+HOLE_IN  = 5.0               # retranqueo de los taladros de fijacion
 PITCH    = 2.54
 ROW_GAP  = 22.86             # separacion REAL entre filas del WT32-ETH01
-XA       = 36.0              # columna de la fila A (pines 1..13)
+XA       = 8.0               # columna de la fila A (pines 1..13)
 XB       = XA + ROW_GAP      # columna de la fila B (pines 14..26)
 Y1       = 10.0              # pin 1, extremo del RJ45
 
@@ -45,96 +45,79 @@ COMPS = []
 def add(ref, val, fp, pads, descr=""):
     COMPS.append(dict(ref=ref, val=val, fp=fp, pads=pads, descr=descr))
 
-# --- bornera de 4 terminales atornillables, AWG18, paso 5,08
+# --- bornera de 4 terminales, abajo a la derecha, sale por la pared inferior
+TY = 51.5
 add("J1", "Bornera 4 vias 5.08", "TERM4",
-    [(1, TERM_X0 + 0 * TERM_P, TERM_Y, "RS485_A"),
-     (2, TERM_X0 + 1 * TERM_P, TERM_Y, "RS485_B"),
-     (3, TERM_X0 + 2 * TERM_P, TERM_Y, "+VIN"),
-     (4, TERM_X0 + 3 * TERM_P, TERM_Y, "GND")],
+    [(1, 40.0, TY, "RS485_A"), (2, 45.08, TY, "RS485_B"),
+     (3, 50.16, TY, "+VIN"),   (4, 55.24, TY, "GND")],
     "A / B / +V(9-24Vdc) / GND")
 
-# --- zocalos del modulo
-MODNET = {
-    1: None, 2: "GND", 3: None, 4: None, 5: None,
-    6: "P1_DE", 7: "P1_RO", 8: "P1_DI", 9: "GND", 10: None,
-    11: "GND", 12: "+5V", 13: None,
-    14: "GND", 15: "LED_D", 16: None, 17: None, 18: None, 19: None,
-    20: None, 21: None, 22: None, 23: "GND", 24: None, 25: None, 26: None,
-}
-padsA, padsB = [], []
-for p in range(1, 14):
-    x, y = rowA(p); padsA.append((p, x, y, MODNET[p]))
-for p in range(14, 27):
-    x, y = rowB(p); padsB.append((p - 13, x, y, MODNET[p]))
-add("J2", "Zocalo hembra 1x13", "HDR13", padsA, "Fila A del WT32-ETH01, pines 1-13")
-add("J3", "Zocalo hembra 1x13", "HDR13", padsB, "Fila B del WT32-ETH01, pines 14-26")
+MODNET = {1:None,2:"GND",3:None,4:None,5:None,6:"P1_DE",7:"P1_RO",8:"P1_DI",
+          9:"GND",10:None,11:"GND",12:"+5V",13:None,14:"GND",15:"LED_D",
+          16:None,17:None,18:None,19:None,20:None,21:None,22:None,23:"GND",
+          24:None,25:None,26:None}
+padsA=[(p,)+rowA(p)+(MODNET[p],) for p in range(1,14)]
+padsB=[(p-13,)+rowB(p)+(MODNET[p],) for p in range(14,27)]
+add("J2","Zocalo hembra 1x13","HDR13",padsA,"Fila A del WT32-ETH01, pines 1-13")
+add("J3","Zocalo hembra 1x13","HDR13",padsB,"Fila B del WT32-ETH01, pines 14-26")
 
-# --- regulador y condensadores
-add("U1", "7805 TO-220", "TO220",
-    [(1, 8.0, 58.0, "+VIN"), (2, 10.54, 58.0, "GND"), (3, 13.08, 58.0, "+5V")],
-    "Regulador lineal +V -> 5V")
-add("C2", "0.33uF", "CER254",
-    [(1, 8.0, 52.0, "+VIN"), (2, 10.54, 52.0, "GND")], "Entrada del 7805")
-add("C1", "100uF/25V", "ELEC5",
-    [(1, 18.0, 58.0, "+5V"), (2, 23.0, 58.0, "GND")], "Salida del 7805")
-add("C3", "100nF", "CER254",
-    [(1, 16.0, 24.0, "+5V"), (2, 16.0, 21.46, "GND")], "Desacoplo del MAX485")
+# --- alimentacion, arriba a la derecha
+add("U1","7805 TO-220","TO220",
+    [(1,40.0,12.0,"+VIN"),(2,42.54,12.0,"GND"),(3,45.08,12.0,"+5V")],
+    "Regulador +V -> 5V (admite K7805-2000R3)")
+add("C2","0.33uF","CER254",[(1,40.0,18.0,"+VIN"),(2,42.54,18.0,"GND")],"Entrada")
+add("C1","100uF/25V","ELEC5",[(1,52.0,12.0,"+5V"),(2,57.0,12.0,"GND")],"Salida")
+add("C3","100nF","CER254",[(1,56.0,30.0,"+5V"),(2,56.0,32.54,"GND")],"Desacoplo MAX485")
 
-# --- MAX485 en DIP-8
-add("U2", "MAX485 DIP-8", "DIP8",
-    [(1, 19.62, 26.0, "RO_RAW"), (2, 19.62, 28.54, "P1_DE"),
-     (3, 19.62, 31.08, "P1_DE"), (4, 19.62, 33.62, "P1_DI"),
-     (5, 12.0, 33.62, "GND"), (6, 12.0, 31.08, "RS485_A"),
-     (7, 12.0, 28.54, "RS485_B"), (8, 12.0, 26.0, "+5V")],
+# --- MAX485: RO/DE/DI hacia el modulo, A/B hacia la bornera
+add("U2","MAX485 DIP-8","DIP8",
+    [(1,40.0,30.0,"RO_RAW"),(2,40.0,32.54,"P1_DE"),
+     (3,40.0,35.08,"P1_DE"),(4,40.0,37.62,"P1_DI"),
+     (5,47.62,37.62,"GND"),(6,47.62,35.08,"RS485_A"),
+     (7,47.62,32.54,"RS485_B"),(8,47.62,30.0,"+5V")],
     "Transceptor RS-485 half duplex")
 
-# --- divisor de RO (5V -> 3,3V) y terminacion
-add("R2", "1k", "AXIAL254",
-    [(1, 24.0, 20.0, "RO_RAW"), (2, 24.0, 17.46, "P1_RO")], "Divisor RO, superior")
-add("R3", "2k", "AXIAL254",
-    [(1, 28.0, 17.46, "P1_RO"), (2, 28.0, 20.0, "GND")], "Divisor RO, inferior")
-add("R1", "120R", "AXIAL254",
-    [(1, 15.0, 28.54, "RS485_B"), (2, 15.0, 31.08, "RS485_A")], "Terminacion de linea")
+add("R2","1k","AXIAL254",[(1,40.0,28.0,"RO_RAW"),(2,40.0,25.46,"P1_RO")],"Divisor RO sup.")
+add("R3","2k","AXIAL254",[(1,44.0,25.46,"P1_RO"),(2,44.0,23.0,"GND")],"Divisor RO inf.")
+add("R1","120R","AXIAL254",
+    [(1,52.0,32.54,"RS485_B"),(2,52.0,35.08,"RS485_A")],"Terminacion de linea")
+add("R4","1k","AXIAL254",[(1,36.0,43.0,"LED_D"),(2,36.0,45.54,"LED_A")],"Limitador LED")
+add("D1","LED 3mm","LED254",[(1,36.0,49.0,"LED_A"),(2,36.0,51.54,"GND")],"Enlace Modbus")
 
-# --- LED de enlace Modbus
-add("R4", "1k", "AXIAL254",
-    [(1, 66.0, 44.0, "LED_D"), (2, 66.0, 46.54, "LED_A")], "Limitador del LED")
-add("D1", "LED 3mm", "LED254",
-    [(1, 66.0, 52.0, "LED_A"), (2, 66.0, 54.54, "GND")], "Enlace Modbus")
-
-# --- taladros de fijacion
-MOUNT = [(HOLE_IN, HOLE_IN), (BW - HOLE_IN, HOLE_IN),
-         (HOLE_IN, BH - HOLE_IN), (BW - HOLE_IN, BH - HOLE_IN)]
+MOUNT=[(HOLE_IN,HOLE_IN),(BW-HOLE_IN,HOLE_IN),
+       (HOLE_IN,BH-HOLE_IN),(BW-HOLE_IN,BH-HOLE_IN)]
 
 # =================================================================== rutas
 # (net, capa, [(x,y), ...])  -- el cobre de GND lo resuelve el plano
 F, B = "F.Cu", "B.Cu"
 TRACKS = [
-    # --- alimentacion
-    ("+VIN", B, [(40.16, 64.0), (40.16, 68.0), (8.0, 68.0), (8.0, 58.0)]),
-    ("+VIN", B, [(8.0, 58.0), (8.0, 52.0)]),
-    ("+5V",  F, [(13.08, 58.0), (18.0, 58.0)]),
-    ("+5V",  F, [(18.0, 58.0), (18.0, 20.0), (12.0, 20.0), (12.0, 26.0)]),
-    ("+5V",  F, [(18.0, 24.0), (16.0, 24.0)]),
-    ("+5V",  F, [(18.0, 58.0), (18.0, 61.0), (32.0, 61.0), (32.0, 46.0),
-                 (47.0, 46.0), (47.0, 37.94), (XA, 37.94)]),
-    # --- bus RS-485 hacia la bornera
-    ("RS485_A", B, [(12.0, 31.08), (16.0, 31.08), (16.0, 50.0),
-                    (30.0, 50.0), (30.0, 64.0)]),
-    ("RS485_B", F, [(12.0, 28.54), (5.0, 28.54), (5.0, 66.5),
-                    (35.08, 66.5), (35.08, 64.0)]),
-    ("RS485_A", F, [(15.0, 31.08), (12.0, 31.08)]),
-    ("RS485_B", F, [(15.0, 28.54), (12.0, 28.54)]),
-    # --- senales al modulo
-    ("P1_DE", B, [(19.62, 31.08), (22.0, 31.08), (22.0, 22.70), (XA, 22.70)]),
-    ("P1_DE", F, [(19.62, 28.54), (19.62, 31.08)]),
-    ("P1_DI", F, [(19.62, 33.62), (24.0, 33.62), (24.0, 27.78), (XA, 27.78)]),
-    ("RO_RAW", F, [(19.62, 26.0), (19.62, 20.0), (24.0, 20.0)]),
-    ("P1_RO", F, [(24.0, 17.46), (28.0, 17.46)]),
-    ("P1_RO", F, [(28.0, 17.46), (31.0, 17.46), (31.0, 25.24), (XA, 25.24)]),
-    # --- LED
-    ("LED_D", F, [(XB, 37.94), (62.0, 37.94), (62.0, 44.0), (66.0, 44.0)]),
-    ("LED_A", F, [(66.0, 46.54), (66.0, 52.0)]),
+    # alimentacion de entrada
+    ("+VIN", B, [(50.16, TY), (50.16, 55.5), (61.0, 55.5), (61.0, 15.0), (40.0, 15.0)]),
+    ("+VIN", B, [(40.0, 15.0), (40.0, 18.0)]),
+    ("+VIN", B, [(40.0, 15.0), (40.0, 12.0)]),
+    # 5 V: regulador, condensador, MAX485, desacoplo y modulo
+    ("+5V",  F, [(45.08, 12.0), (52.0, 12.0)]),
+    ("+5V",  F, [(52.0, 12.0), (52.0, 26.0), (47.62, 26.0), (47.62, 30.0)]),
+    ("+5V",  F, [(52.0, 26.0), (56.0, 26.0), (56.0, 30.0)]),
+    ("+5V",  F, [(52.0, 12.0), (52.0, 2.5), (2.5, 2.5), (2.5, 37.94), (XA, 37.94)]),
+    # RS-485 hacia la bornera: A cruza a B, asi que A va por la cara inferior
+    ("RS485_A", B, [(47.62, 35.08), (50.0, 35.08), (50.0, 44.0), (40.0, 44.0), (40.0, TY)]),
+    ("RS485_B", F, [(47.62, 32.54), (45.08, 32.54), (45.08, TY)]),
+    ("RS485_A", F, [(52.0, 35.08), (47.62, 35.08)]),
+    ("RS485_B", F, [(52.0, 32.54), (47.62, 32.54)]),
+    # senales al modulo, cruzando la fila B por los huecos entre pads
+    ("P1_DE", F, [(40.0, 32.54), (40.0, 35.08)]),
+    ("P1_DE", B, [(40.0, 32.54), (36.0, 32.54), (36.0, 21.43),
+                  (29.0, 21.43), (29.0, 22.70), (XA, 22.70)]),
+    ("RO_RAW", F, [(40.0, 30.0), (40.0, 28.0)]),
+    ("P1_RO", F, [(40.0, 25.46), (44.0, 25.46)]),
+    ("P1_RO", F, [(40.0, 25.46), (38.0, 25.46), (38.0, 26.51),
+                  (28.0, 26.51), (28.0, 25.24), (XA, 25.24)]),
+    ("P1_DI", F, [(40.0, 37.62), (35.0, 37.62), (35.0, 29.05),
+                  (27.0, 29.05), (27.0, 27.78), (XA, 27.78)]),
+    # LED
+    ("LED_D", F, [(XB, 37.94), (28.0, 37.94), (28.0, 43.0), (36.0, 43.0)]),
+    ("LED_A", F, [(36.0, 45.54), (36.0, 49.0)]),
 ]
 
 # ================================================================ geometria
@@ -151,7 +134,7 @@ NETIDX = {n: i + 1 for i, n in enumerate(NETS)}
 
 # huellas: (tipo, diametro de pad, broca, forma del pad 1)
 FP = {
-    "TERM4":   (2.8, 1.3), "HDR13": (1.7, 1.0), "TO220": (2.2, 1.2),
+    "TERM4":   (2.8, 1.3), "HDR13": (1.6, 1.0), "TO220": (2.2, 1.2),
     "DIP8":    (1.6, 0.9), "ELEC5": (1.8, 1.0), "CER254": (1.6, 0.8),
     "AXIAL254":(1.6, 0.8), "LED254": (1.6, 0.8),
 }
@@ -175,8 +158,9 @@ def segs_cross(a, b, c, d):
     o1, o2, o3, o4 = o(a,b,c), o(a,b,d), o(c,d,a), o(c,d,b)
     return o1 != o2 and o3 != o4
 
-TRACE_W = 0.5
-CLEAR = 0.25
+POWER = ("+5V", "+VIN", "GND")
+def wof(net): return 0.8 if net in POWER else 0.25
+CLEAR = 0.20
 problemas = []
 
 # pads solapados
@@ -198,7 +182,7 @@ for tr in TRACKS:
             continue
         rad = FP[next(c["fp"] for c in COMPS if c["ref"] == ref)][0] / 2.0
         for a, b in seg_pts(tr):
-            if dist_pt_seg((px, py), a, b) < rad + TRACE_W / 2 + CLEAR:
+            if dist_pt_seg((px, py), a, b) < rad + wof(net) / 2 + CLEAR:
                 problemas.append(
                     f"pista {net} ({layer}) roza el pad {ref}.{n} de {pnet}")
                 break
@@ -332,7 +316,7 @@ for (ax, ay, bx, by) in ((0,0,BW,0), (BW,0,BW,BH), (BW,BH,0,BH), (0,BH,0,0)):
 
 # pistas
 for (net, layer, pts) in TRACKS:
-    wdt = 1.0 if net in ("+5V", "+VIN", "GND") else 0.5
+    wdt = wof(net)
     for i in range(len(pts) - 1):
         (ax, ay), (bx, by) = pts[i], pts[i + 1]
         if (ax, ay) == (bx, by):
