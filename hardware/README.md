@@ -1,214 +1,201 @@
-# Portadora MINI — ayModbusConverter
+# PCB base — ayModbusConverter MINI
 
-Rev C · KiCad 8 · PCB base para la tarjeta de desarrollo **WT32-ETH01 V1.4**
+Rev D · KiCad 8 · 95 × 72 mm, dos capas
 
-Un solo puerto RS-485 y la LAN del módulo. Sin OLED, sin RS-232, sin tramo óptico.
-Configuración por consola serie y por WiFi (AP con portal cautivo).
+Placa atornillada al chasis, que a su vez va al riel DIN por los anclajes. La
+WT32-ETH01 se enchufa en dos zócalos de 13 pines con el **eje largo vertical**: el RJ45
+sale por la pared superior del chasis y la bornera por la inferior. La tapa solo lleva el
+agujero del LED de enlace.
 
----
-
-## 1. Qué es esta placa
-
-Es una **base**: la WT32-ETH01 no se suelda, se enchufa sobre dos zócalos hembra de 13
-posiciones. La portadora solo aporta lo que el módulo no trae:
-
-1. Alimentación 24 VDC → 5 V con protección de entrada.
-2. Transceptor RS-485 no aislado con terminación, polarización y protección.
-3. Botón CFG, LED de actividad y cabecera de consola/programación.
-
-Hacia el exterior hay **dos borneras y nada más**:
-
-| Conector | Vías | Señales |
-|---|:-:|---|
-| J1 | 2 | 24 VDC: `+` y `−` |
-| J2 | 3 | RS-485: `A`, `B`, `GND` |
-
-La LAN sale por el RJ45 del propio módulo. J3 es una cabecera interna de 2,54 mm, no un
-conector de campo.
+![Trazado](pcb_preview.png)
 
 ---
 
-## 2. Pinaje del módulo
+## 1. Qué lleva
 
-Verificado contra el datasheet V1.4 y la referencia comunitaria
-[egnor/wt32-eth01](https://github.com/egnor/wt32-eth01). La asignación de GPIO sale de
-`src/board.h` del firmware: **no la cambies sin cambiar el firmware**.
+| Ref | Valor | Función |
+|---|---|---|
+| J1 | Bornera 4 vías, paso 5,08 | A, B, +V (9–24 VDC), GND |
+| J2, J3 | Zócalo hembra 1×13, paso 2,54 | WT32-ETH01, filas a **22,86 mm** |
+| U1 | 7805 TO-220 | +V → 5 V |
+| U2 | MAX485 DIP-8 | Transceptor RS-485 half duplex |
+| C1 | 100 µF / 25 V | Salida del regulador |
+| C2 | 0,33 µF | Entrada del regulador |
+| C3 | 100 nF | Desacoplo del MAX485 |
+| R1 | 120 Ω | Terminación entre A y B |
+| R2, R3 | 1 k / 2 k | Divisor de RO, 5 V → 3,3 V |
+| R4 | 1 k | Limitador del LED |
+| D1 | LED 3 mm | Enlace Modbus |
 
-| Pin | Señal | Uso en esta placa |
-|:-:|---|---|
-| 4 | `ESP32_EN` | Reset, con C8 de 10 µF |
-| 5 | `IO32` | Botón CFG |
-| 6 | `IO33` | DE + RE̅ del MAX485 |
-| 7 | `IO5` | RO del MAX485 (por el divisor) |
-| 8 | `IO17` | DI del MAX485 |
-| 12 | `5V` | Alimentación |
-| 15 | `IO2` | LED de actividad |
-| 24 | `IO0` | Boot, a J3 |
-| 25 / 26 | `IO3` / `IO1` | Consola UART0, a J3 |
-| 3, 10 | `3V3` | **Salida** del regulador del módulo |
-| 2, 9, 11, 14, 23 | `GND` | Masa |
-
-### Tres trampas del módulo
-
-**Pin 1 no es el EN del ESP32.** Es `CLK_EN`, el habilitador del oscilador de 50 MHz del
-PHY. El EN del micro es el pin 4. Confundirlos deja la placa sin arrancar o sin Ethernet.
-Aquí el pin 1 queda sin conectar: el firmware habilita el oscilador por IO16, que no sale
-al conector.
-
-**Alimentar por 5 V o por 3,3 V, nunca por los dos.** El regulador del módulo es un
-AMS1117 de dudosa procedencia sin protección térmica real; por encima de unos 6 V se
-quema. Por eso el K7805 entrega 5 V exactos al pin 12 y los pines 3 y 10 se usan solo
-como salida.
-
-**Arranque con rampa lenta.** La red R-C de EN del módulo es de 1 ms. Si la fuente de
-24 V sube despacio, el ESP32 puede quedarse colgado al encender. **C8 de 10 µF** lleva el
-retardo a unos 100 ms y lo resuelve. Es el componente que evita fallos intermitentes de
-arranque en campo, y no está en ningún diseño de referencia del módulo.
-
-### GPIO que no se pueden usar
-
-IO16 (alimentación del PHY), IO18 (MDIO), IO23 (MDC), IO19, IO21, IO22, IO25, IO26 e IO27
-los ocupa el PHY y ni siquiera salen al conector. IO0 comparte el reloj de 50 MHz: a GND
-solo para grabar. IO12 debe estar en bajo al arrancar. IO2 debe quedar flotante o en bajo
-al arrancar, cosa que el LED con su resistencia a GND cumple. IO35, IO36 e IO39 son solo
-entrada y **no tienen pull-up interno**, razón por la que el botón va en IO32.
+La bornera admite AWG18 sin problema: taladro de 1,3 mm y pad de 2,8 mm.
 
 ---
 
-## 3. Bloque RS-485
+## 2. Tres cosas que cambié respecto a lo pedido
 
-### Selección de tensión — JP1
+### 2.1 Separación de los zócalos: 22,86 mm, no 24
 
-| JP1 | Transceptor | R2 | R3 |
+La cota real del módulo son **22,86 mm** (0,9 pulgadas), verificada contra la huella del
+datasheet V1.4. Con 24 mm el módulo sencillamente no entra: son 1,14 mm de desalineación
+repartidos en 13 pines. Además 24 / 2,54 = 9,45, o sea que 24 mm ni siquiera cae en la
+rejilla de 2,54 en la que están los pines.
+
+Es el único punto donde no seguí la indicación al pie de la letra, y lo hice porque la
+alternativa era una placa inservible.
+
+### 2.2 Divisor R2 / R3 en RO
+
+No estaba en tu lista, pero es obligatorio. El MAX485 alimentado a 5 V saca **RO a 5 V**,
+y esa señal entra en IO5 del ESP32, que es de 3,3 V. Sin divisor se destruye la entrada.
+R2 de 1 k y R3 de 2 k la dejan en 3,33 V.
+
+Si prefieres quitar los dos resistores, cambia el MAX485 por un **MAX3485 o SP3485**
+(mismo pinout DIP-8) alimentado a 3,3 V desde el propio módulo. Son dos componentes menos
+y una fuente de error menos.
+
+### 2.3 Condensador de salida: 25 V, no 6 V
+
+Pediste 100 µF / 6 V sobre un bus de 5 V. Eso es 1,2× de margen, cuando lo habitual es
+1,5× a 2×. Los electrolíticos pierden capacidad con la temperatura y la edad, y dentro de
+un tablero cerrado envejecen rápido. Puse 25 V, que no cuesta más ni ocupa mucho más.
+
+---
+
+## 3. El 7805 es el punto débil de esta placa
+
+Lo monté como pediste, pero conviene saber lo que implica:
+
+| Entrada | 150 mA | 250 mA | 350 mA |
 |---|---|---|---|
-| 1-2 (5 V) | MAX485ESA | 1 k | 2 k |
-| 2-3 (3,3 V) | MAX3485 / SP3485 | 0 Ω | sin poblar |
+| 9 V | 0,60 W | 1,00 W | 1,40 W |
+| 12 V | 1,05 W | 1,75 W | 2,45 W |
+| 24 V | 2,85 W | **4,75 W** | **6,65 W** |
 
-El MAX485 a 5 V acepta los 3,3 V del ESP32 en DI y DE, pero su salida RO llega a 5 V y
-destruiría la entrada del micro. El divisor R2/R3 la baja a 3,33 V. Con un MAX3485 (mismo
-pinout SOIC-8) el divisor desaparece.
+El consumo del WT32-ETH01 con Ethernet activo y picos de WiFi está entre 150 y 350 mA.
 
-### Terminación de fin de línea
+A 24 V de entrada el regulador tiene que disipar entre 3 y 7 W. Un TO-220 sin disipador
+aguanta algo más de 1 W antes de superar los 100 °C de encapsulado. Con 7 W dentro de una
+caja de inoxidable cerrada, el 7805 entra en protección térmica y el equipo se reinicia en
+bucle.
 
-**R4 de 120 Ω**, habilitada con el puente **JP2**. Ciérralo solo si esta tarjeta es un
-extremo físico del segmento. Con el BW500 a pocos metros y 9600 bps puede quedar abierto.
+Tres salidas, de menos a más trabajo:
 
-### Polarización y protección
+1. **Alimentar a 9 V.** Dentro del rango que pediste y la disipación baja a 1 W. Con un
+   disipador pequeño funciona.
+2. **Sustituir por un K7805-2000R3.** Es un convertidor conmutado con el **mismo pinout
+   SIP-3** que el 7805, así que entra en la misma huella sin tocar la placa. Rendimiento
+   del 90 %, disipa menos de 0,2 W a 24 V. Cuesta unas pocas veces más que un 7805 y
+   resuelve el problema entero.
+3. **Dejar el 7805 con disipador** y limitar la entrada a 12 V.
 
-- **R5 / R6 de 560 Ω** fijan el estado de reposo del bus. Una sola vez por segmento: si
-  el BW500 o el PLC ya polarizan, retíralas.
-- **R7 / R8 de 10 Ω** antipulso limitan la corriente de falla hacia el transceptor.
-- **D4 (SM712)** es una TVS asimétrica de −7/+12 V, el recorte exacto del rango de modo
-  común de RS-485. No la sustituyas por una bidireccional simétrica genérica.
-- **R10 de 100 Ω** va entre el borne `GND` de J2 y la masa de la placa. Sin aislamiento
-  galvánico, las masas de la tarjeta y del BW500 quedan unidas por el cable; R10 limita la
-  corriente de lazo de tierra sin perder la referencia de modo común.
-
-> Al no haber aislamiento, ambos equipos deben compartir barra de tierra, idealmente la
-> misma cabina. Si el integrador está en otro tablero con tierra distinta, R10 no basta y
-> hay que volver a un transceptor aislado tipo ADM2587E.
+La huella que puse admite las tres: los tres pines son IN, GND, OUT a paso 2,54.
 
 ---
 
-## 4. Conectores
+## 4. El LED de enlace
 
-**J2 — RS-485 al BW500 (Port 2)**
+D1 está en la posición (66, 52) de la placa, que en la caja queda a **Y = −17,3 mm,
+Z = +18,5 mm** respecto al centro de la tapa.
 
-| Pin | Señal |
-|:-:|---|
-| 1 | A (+) |
-| 2 | B (−) |
-| 3 | GND (común, por R10) |
+Lo mueve IO2, que en el firmware es `PIN_LED_ACT`: parpadea con cada trama Modbus válida.
+Entre paquetes queda apagado, así que un parpadeo continuo significa que hay polling en
+ambos extremos, que es justo lo que querías ver.
 
-**J3 — consola y primera grabación** (adaptador USB-TTL de 3,3 V)
-
-| Pin | Señal | Al adaptador |
-|:-:|---|---|
-| 1 | 3V3 | referencia, **no alimentar por aquí** |
-| 2 | TXD0 | RX del adaptador |
-| 3 | RXD0 | TX del adaptador |
-| 4 | IO0 | a GND para modo descarga |
-| 5 | EN | pulso a GND para reset |
-| 6 | GND | GND |
-
-Secuencia: alimentar por 24 V, puentear pin 4 a GND, pulsar reset, lanzar el flasheo,
-retirar el puente y resetear. Después de la primera carga, las siguientes van por OTA.
+**Necesita guía de luz.** Desde la cara superior del PCB hasta la cara interior de la tapa
+hay 32,4 mm. Un LED de 3 mm soldado a ras no llega ni de lejos. Dos opciones: una guía de
+luz de 3 mm de ese largo, o montar el LED sobre patillas largas de modo que la cápsula
+quede a ras de la tapa. La segunda es más frágil pero no cuesta nada.
 
 ---
 
-## 5. Interfaz local
+## 5. Ruteado
 
-Sin OLED, el diagnóstico en planta queda en:
+Dos capas, con plano de masa en ambas. No hay vías de señal: todos los componentes son de
+agujero pasante, así que cada pad une las dos capas por sí mismo.
 
-| Elemento | Función |
+| Capa | Nets |
 |---|---|
-| D3 verde | Alimentación presente |
-| D5 ámbar (IO2) | Actividad Modbus |
-| SW1 corta | Siguiente página / despertar |
-| SW1 3 s | Levanta el AP WiFi de configuración |
-| SW1 10 s | Restaura valores de fábrica |
-| RJ45 del módulo | LED de enlace y velocidad propios |
+| F.Cu | +5V, RS485_B, P1_RO, P1_DI, RO_RAW, LED_D, LED_A |
+| B.Cu | +VIN, RS485_A, P1_DE |
 
-La configuración completa se hace por el AP `ayModbus-XXXXXX` con portal cautivo, o por la
-consola serie de J3 a 115200 8N1.
+Tres nets van por la cara inferior porque sus cruces son topológicamente inevitables: A y B
+se cruzan entre el MAX485 y la bornera, y DE cruza a RO y DI porque el orden de los pines
+del MAX485 es el inverso del orden de los pines del módulo.
+
+Anchos: 1,0 mm en alimentación, 0,5 mm en señal.
+
+### Verificación automática
+
+El generador comprueba, antes de escribir el archivo:
+
+- pads que se solapan
+- pistas que pasan sobre pads de otra red
+- cruces entre pistas de distinta red en la misma capa
+- pads con red pero sin pista que los toque
+- componentes fuera del contorno
+
+Las cinco pasan. Cuatro de ellas fallaron en la primera pasada y señalaron errores reales:
+la pista de +5 V pasaba por encima del pad de masa del propio C1, y la del LED bajaba justo
+por la columna de pads de la fila B y pisaba el pin 14.
 
 ---
 
-## 6. Archivos
+## 6. Conexiones al módulo
+
+| Pin del módulo | Señal | Va a |
+|---|---|---|
+| 7 (IO5) | RO | Divisor R2/R3 |
+| 8 (IO17) | DI | U2 pin 4 |
+| 6 (IO33) | DE + RE̅ | U2 pines 2 y 3 |
+| 12 | 5 V | Salida del 7805 |
+| 15 (IO2) | LED | R4 → D1 |
+| 2, 9, 11, 14, 23 | GND | Plano |
+
+Coinciden con `src/board.h` del firmware. Los demás pines quedan sin conectar.
+
+---
+
+## 7. Lo que esta placa no lleva
+
+Por simplificar quedaron fuera tres cosas que conviene tener presentes:
+
+- **Sin cabecera de programación.** La primera grabación hay que hacerla con el módulo
+  fuera de la placa, con un adaptador USB-TTL. Después todo va por OTA.
+- **Sin botón CFG.** El firmware usa IO32 para levantar el AP de WiFi y para los valores de
+  fábrica. Sin botón, la configuración es solo por Ethernet o por la consola serie del
+  módulo desenchufado.
+- **Sin protección de entrada.** No hay fusible, ni diodo antiinversión, ni TVS en el bus.
+  Si el equipo va a un tablero industrial con maniobra inductiva cerca, merece la pena
+  añadir al menos una SM712 entre A, B y GND.
+
+Ninguna impide que funcione; las tres son decisiones conscientes.
+
+---
+
+## 8. Archivos
 
 | Archivo | Contenido |
 |---|---|
-| `aymc_carrier_min.kicad_pro` | Proyecto KiCad 8 |
-| `aymc_carrier_min.kicad_sch` | Esquemático, hoja A3 |
-| `aymc.kicad_sym` | Símbolos propios |
-| `aymc.pretty/WT32-ETH01_2x13_THT.kicad_mod` | Huella del módulo |
-| `sym-lib-table`, `fp-lib-table` | Tablas de biblioteca del proyecto |
-| `netlist.csv` | 25 redes |
+| `aymc_carrier_min.kicad_pcb` | Placa ruteada |
+| `aymc_carrier_min.kicad_sch` | Esquema |
+| `aymc.kicad_sym` | Símbolos |
+| `pcb_preview.png` | Vista del trazado |
+| `netlist.csv` | 11 redes |
 | `bom.csv` | Lista de materiales |
+| `tools/gen_pcb.py` | Genera placa, netlist y BOM, y verifica el ruteado |
+| `tools/gen_sch.py` | Genera el esquema desde la misma tabla |
 
-### Sobre la huella
-
-2×13 pines, paso 2,54 mm, filas separadas **22,86 mm**, pin 1 cuadrado. El contorno de
-26 × 60 mm es **indicativo**: el RJ45 sobresale por el extremo de los pines 1 y 26.
-Antes de cerrar el PCB, contrasta la posición del conector con el modelo STEP de la
-referencia comunitaria y deja hueco para el cuerpo del RJ45.
-
-Los símbolos y la huella de esta carpeta son originales. El repositorio de referencia no
-publica licencia, así que la geometría se tomó como dato físico medido y no se copió
-ningún archivo suyo.
+Esquema y placa salen de **una sola tabla de componentes y redes**, así que no pueden
+desincronizarse. Si cambias algo, cámbialo en `gen_pcb.py` y vuelve a ejecutar los dos.
 
 ---
 
-## 7. Puesta en marcha
+## 9. Pendiente
 
-1. Sin el módulo puesto, alimenta y mide **5,0 V** en el pin 12 del zócalo. Solo entonces
-   enchufa la WT32-ETH01.
-2. Verifica que D3 enciende y que el RJ45 marca enlace contra un switch.
-3. Con el bus conectado, mide en reposo entre A y B: entre 200 mV y 1 V. Si marca 0 V, no
-   hay polarización en ningún punto del segmento.
-4. Lee el registro 40.064 del BW500: debe devolver **2**. Si no responde, invierte A y B.
-5. Lee Rate desde el PLC con `modpoll` antes de programar el bloque `MB_CLIENT`.
-6. Prueba de robustez: desconecta J2 con el PLC leyendo. El estado del esclavo debe pasar
-   a caído y responder excepción 0x0B sin que caiga la conexión TCP.
+La mitad derecha de la placa está vacía: con esta lista de componentes cabría todo en unos
+70 × 72 mm. No la encogí porque el patrón de taladros del chasis está hecho para 95 × 72.
+Si quieres ahorrar placa, se cambian las dos cosas a la vez.
 
----
-
-## 8. Parámetros del BW500 (Port 2, RS-485)
-
-Los parámetros de comunicación llevan índice de puerto (`-02` para el RS-485).
-
-| Parámetro | Valor | Significado |
-|---|:-:|---|
-| `P770-02` | 3 | Modbus RTU |
-| `P771-02` | 1…247 | Dirección del esclavo |
-| `P772-02` | 3 | Baudios (el manual documenta 9600; confírmalo en tu edición) |
-| `P773-02` | 0 | Sin paridad |
-| `P774-02` | 8 | Bits de datos |
-| `P775-02` | 1 | Bit de parada |
-| `P778-02` | 0 | Sin módem |
-| `P799` | 1 | Control de programación por Modbus |
-
-Registros de proceso, todos de 32 bits sobre dos registros: Rate en 41.010, Load en
-41.012, Speed en 41.014, Total 1 en 41.016, Total 2 en 41.018 y Device State en 41.020.
-El registro 40.064 devuelve 2 y sirve de heartbeat. Offset de cable: `41010 − 40001 =
-1009` (0x03F1) con función 03.
+El chasis también necesita un retoque: antes tenía dos ventanas de bornera, arriba y abajo.
+Ahora hace falta **una ventana de bornera abajo y una de RJ45 arriba**, y la tapa pasa a
+llevar solo el agujero de 3 mm del LED.
