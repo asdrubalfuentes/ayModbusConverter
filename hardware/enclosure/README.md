@@ -59,7 +59,7 @@ zócalos = **33,6 mm** de los 40 disponibles. Quedan 6,4 mm de holgura.
 | `desarrollos.png` | Vista rápida de ambos desarrollos |
 | `fusion_carcasa.py` | Script de Fusion 360 que construye el 3D |
 | `clip_din35.scad` | Clip de riel DIN paramétrico en OpenSCAD |
-| `../tools/gen_carcasa.py` | Generador de los DXF (Python puro) |
+| `../../gen_carcasa.py` | Generador de los DXF (Python puro) |
 
 ### Capas de los DXF
 
@@ -93,30 +93,45 @@ Todos los parámetros están arriba del script, en milímetros.
 
 ---
 
-## 5. Clip de riel DIN
+## 5. Anclaje de riel DIN
 
-```bash
-openscad -o clip_din35.stl clip_din35.scad
-```
+Se usa el **adaptador DIN comercial verde** que ya está en uso, no una pieza impresa. Es
+un cuerpo nervado con gancho fijo en un extremo y gancho de entrada en el otro, que
+abraza el riel TS35 por debajo y ofrece arriba una cara plana con tres agujeros.
 
-Se necesitan **dos unidades** por equipo. Van al dorso del chasis con dos tornillos M3
-cada uno, separados 60 mm entre clips.
+Se necesitan **dos unidades** por equipo, atornilladas al dorso del chasis y separadas
+60 mm entre ejes. El clip va con su eje largo **en vertical**, perpendicular al riel.
 
-Diseño: gancho rígido en un lado y brazo en voladizo en el otro, que cede unos 2 mm al
-montar sobre el riel TS35. Sin piezas móviles ni muelles metálicos.
+### Patrón de taladros en el chasis
 
-| Parámetro de impresión | Valor |
+| Concepto | Valor |
 |---|---|
-| Material | PETG o ABS |
-| Perímetros | 4 |
-| Relleno | 40 % |
-| Soporte | No |
-| Orientación | Base sobre la cama |
+| Agujeros por clip | 3 |
+| Paso entre centros | 11,0 mm |
+| Rosca | M2 |
+| Taladro en la chapa | Ø 2,4 mm (paso libre) |
+| Separación entre clips | 60 mm (±30 del centro) |
 
-**El PLA no sirve**: dentro de un tablero cerrado se deforma y el clip acaba soltándose.
-La orientación importa: tal como sale del `.scad`, las capas quedan perpendiculares al
-esfuerzo del brazo flexible, que es lo correcto. Si el brazo queda duro, sube `spring_len`
-o baja `spring_t` dos décimas.
+Los seis taladros ya están en `pieza1_chasis_desarrollo.dxf`. Tornillos M2 × 6 con tuerca
+o, mejor, tuercas remachables M2 en la chapa para poder desmontar sin acceso por detrás.
+
+### Cotas tomadas de la foto — confirmar con calibre
+
+Estas salen de medir las fotos contra la cuadrícula de 5 mm y la regla, cruzadas con el
+paso de 11 mm. Tienen un margen de error de alrededor del 10 %:
+
+| Cota | Estimación | Para qué hace falta |
+|---|---|---|
+| Largo del clip | ≈ 38–44 mm | Holgura en el dorso |
+| Ancho del clip | ≈ 9 mm | Holgura entre clips |
+| Diámetro del agujero | ≈ 2,2 mm | Coherente con M2 |
+| Alto total con ganchos | sin medir | Separación del riel al tablero |
+
+Para el chasis basta con el patrón de taladros, que es dato firme. Las demás solo hacen
+falta si en algún momento se quiere imprimir un repuesto del clip.
+
+> `clip_din35.scad` queda como diseño alternativo imprimible, por si hiciera falta un
+> repuesto. No pretende ser una copia del adaptador comercial.
 
 ---
 

@@ -28,9 +28,16 @@ STANDOFF     = 6.0          # altura del separador del PCB
 
 # Montaje
 M3   = 3.2      # paso libre para M3
+M2   = 2.4      # paso libre para M2
 PCB_HOLE_IN = 4.0           # retranqueo de los taladros del PCB
-DIN_X = 30.0                # separacion horizontal entre clips DIN
-DIN_Y = 22.0                # separacion vertical de tornillos del clip
+# Anclaje DIN comercial del usuario: 3 agujeros M2 a 11 mm entre centros,
+# repartidos a lo largo de la pieza. El clip se monta en vertical para que
+# cruce el riel horizontal; los 3 taladros quedan en columna.
+DIN_X    = 30.0             # separacion horizontal entre los dos clips
+DIN_P    = 11.0             # paso entre taladros del clip  [DATO DEL USUARIO]
+DIN_N    = 3                # taladros por clip             [DATO DEL USUARIO]
+CLIP_L   = 38.0             # largo del clip     [medido en foto, confirmar]
+CLIP_WD  = 9.0              # ancho del clip     [medido en foto, confirmar]
 COVER_SCREW_IN = 6.0        # retranqueo del tornillo de la tapa respecto al frente
 
 def bend_allowance(angle_deg=90.0):
@@ -109,11 +116,12 @@ for dx in (0.0, PCB_W - 2 * PCB_HOLE_IN):
     for dy in (0.0, PCB_H - 2 * PCB_HOLE_IN):
         d1.circle(px0 + dx, py0 + dy, M3)
 
-# --- taladros de los clips DIN (en el fondo)
+# --- taladros de los clips DIN (en el fondo): 2 clips x 3 agujeros M2
 cx, cy = Lx / 2.0, y0 + Ly / 2.0
+DIN_SPAN = (DIN_N - 1) * DIN_P
 for sx in (-DIN_X, DIN_X):
-    for sy in (-DIN_Y, DIN_Y):
-        d1.circle(cx + sx, cy + sy, M3)
+    for i in range(DIN_N):
+        d1.circle(cx + sx, cy - DIN_SPAN / 2.0 + i * DIN_P, M2)
 
 # --- taladros roscados M3 para la tapa, en las paredes.
 # Se miden desde el BORDE LIBRE de la pared, que al montar coincide con el
@@ -208,7 +216,9 @@ chk = [
  ("ventana J1 dentro de la pared", WIN_Z0 + J1_H < D_INT),
  ("ventana J2 dentro de la pared", WIN_Z0 + J2_H < D_INT),
  ("ventana RJ45 dentro del lateral", WIN_Z0 + RJ_W < side_flat),
- ("clips DIN dentro del fondo", 2*DIN_X + 40 < W_INT and 2*DIN_Y + 20 < H_INT),
+ ("clips DIN dentro del fondo",
+   2*DIN_X + CLIP_L < W_INT and DIN_SPAN + 12 < H_INT),
+ ("riel de 35 mm libre entre los taladros del clip", DIN_SPAN > 35.0 - 20.0),
  ("alivio de esquina >= espesor", RELIEF >= T),
  ("radio de doblado >= espesor", R >= T),
  ("tornillo de tapa: chasis y pestana coinciden",
