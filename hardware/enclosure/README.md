@@ -135,7 +135,60 @@ falta si en algún momento se quiere imprimir un repuesto del clip.
 
 ---
 
-## 6. Antes de mandar a cortar
+## 6. Ensamble de orientación
+
+`fusion_ensamble.py` monta en Fusion el riel DIN, los dos anclajes, el chasis, los
+separadores, el PCB, el módulo, las borneras y la tornillería, cada uno en su sitio.
+Sirve para fijar la orientación **antes** de rutear el PCB.
+
+### Ejes
+
+| Eje | Dirección |
+|---|---|
+| +X | profundidad, sale del tablero hacia el operador |
+| +Y | vertical |
+| +Z | a lo largo del riel |
+
+### Posiciones verificadas sobre el modelo
+
+| Pieza | X (mm) | Y (mm) | Z (mm) |
+|---|---|---|---|
+| Riel DIN TS35 | −12,5 … −5,0 | −17,5 … 17,5 | tramo libre |
+| Anclaje DIN | −7,0 … −1,0 | −22,0 … 22,0 | ±30 ±4,5 |
+| Chasis | −1,0 … 40,0 | −42,0 … 42,0 | −52,0 … 52,0 |
+| PCB y componentes | −3,5 … 33,1 | −42,0 … 42,0 | −47,5 … 47,5 |
+| Tornillos M2 del anclaje | −1,0 … 4,0 | −13,0 … 13,0 | −32,0 … 32,0 |
+
+El script comprueba solo estos rangos y marca `OK` o `MAL` en el informe.
+
+### Lo que fija el ensamble
+
+- **El riel corre horizontal** y los anclajes van con su eje largo **vertical**, cruzándolo.
+  Los tres agujeros M2 quedan en columna, a 11 mm.
+- **Los tornillos M2 entran desde dentro de la caja** hacia el riel. Van antes que el PCB:
+  una vez montada la placa no se llega a ellos. Si prefieres poder desmontar sin sacar el
+  PCB, pon tuercas remachables M2 en la chapa y atornilla desde el anclaje.
+- **J1 (24 VDC) sale por arriba y J2 (RS-485) por abajo.** El cuerpo de la bornera llega
+  justo a la cara exterior de la pared, así que la chapa retiene el conector.
+- **El RJ45 sale por un costado**, por la pared de la tapa.
+- **Los separadores del PCB quedan fuera de la banda del riel**: están a ±32 mm en vertical
+  y el riel solo ocupa ±17,5, así que las tuercas del dorso no tocan el riel.
+
+### Cotas que salen de aquí
+
+| Concepto | Valor |
+|---|---|
+| Saliente total desde el fondo del riel | 52,5 mm |
+| Altura ocupada dentro de la caja | 33,1 de 40,0 mm |
+| Holgura libre delante del módulo | 6,9 mm |
+
+> `CLIP_BASE`, `CLIP_L` y `CLIP_WD` son estimaciones de foto. En cuanto midas el anclaje
+> real con calibre, corrígelas arriba del script: el saliente total y la posición del riel
+> dependen directamente de ellas.
+
+---
+
+## 7. Antes de mandar a cortar
 
 Cuatro cosas que conviene verificar contra el material real, porque salen de cotas
 nominales y no de piezas medidas:
@@ -153,7 +206,7 @@ antes de lanzar la tirada en inoxidable.
 
 ---
 
-## 7. Montaje
+## 8. Montaje
 
 1. Atornilla los dos clips DIN al dorso del chasis (M3 × 8, avellanados).
 2. Monta los cuatro separadores M3 de 6 mm en el fondo.
